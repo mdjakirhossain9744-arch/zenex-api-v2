@@ -38,9 +38,6 @@ const connectDB = async () => {
 
 const getUTCDateString = (dateObj = new Date()) => new Date(dateObj).toISOString().split('T')[0];
 
-const REAL_API_KEY = "MJI4KV0N1CN"; 
-const BASE_API_URL = "https://api.2oo9.cloud/MXS47FLFX0U/tnemn/@public/api";
-
 // ==========================================
 // 💥 IPRN ELITE JSON-RPC CONFIG 💥
 // ==========================================
@@ -260,15 +257,13 @@ fastify.route({
 
             let response;
             try {
-                // 💥 THE BOSS FIX: REVERTED TO TEMPLATE METHOD (STRICT VALIDATION) 💥
+                // 💥 THE BOSS FIX: STRICT IPRN PAYLOAD (VALIDATION FIXED) 💥
                 const payload = {
                     jsonrpc: "2.0",
                     method: "sms.trunk:allocate",
                     params: { 
                         trunk_id: IPRN_TRUNK_ID,
-                        target: {
-                            prefix_list: [String(rid)]
-                        },
+                        target: String(rid),
                         numbers: 1
                     },
                     id: Date.now()
@@ -335,197 +330,6 @@ fastify.route({
         }
     }
 });
-
-let isSyncing = false;
-
-const syncMNITBackground = async () => {
-    if (isSyncing) return; 
-
-    const lockAcquired = await redis.set("master_otp_sync_lock", "locked", "NX", "EX", 2);
-    if (!lockAcquired) return; 
-
-    isSyncing = true;
-
-    try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000); 
-
-        let otpResponse;
-        try {
-            otpResponse = await fetch(`${BASE_API_URL}/success-otp?t=${Date.now()}`, {
-                method: "GET", headers: { "mauthapi": REAL_API_KEY, "Accept": "application/json" }, signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-        } catch (e) { clearTimeout(timeoutId); isSyncing = false; return; }
-
-        if (!otpResponse || !otpResponse.ok) { isSyncing = false; return; }
-        
-        let providerData;
-        try { providerData = await otpResponse.json(); } catch(e) { isSyncing = false; return; }
-        
-        let liveOtps = [];
-        if (providerData?.data?.otps && Array.isArray(providerData.data.otps)) liveOtps = providerData.data.otps;
-
-        if (liveOtps.length > 0) {
-            
-            try {
-                const RawLog = mongoose.models.mnit_raw_logs || mongoose.model("mnit_raw_logs", new mongoose.Schema({
-                    timestamp: { type: Date, default: Date.now },
-                    rawPayload: { type: Object }
-                }, { strict: false }));
-                
-                await RawLog.create({
-                    rawPayload: { source: `FASTIFY_CLUSTER_LEADER_[${process.pid}]`, totalOtpsFetched: liveOtps.length, providerData: liveOtps }
-                });
-            } catch (logErr) {}
-
-            const otpGroups = {};
-            liveOtps.forEach(m => {
-                const mNum = String(m.number || "").replace(/\D/g, "");
-                if (mNum.length >= 6) {
-                    const key = mNum.length > 9 ? mNum.slice(-9) : mNum;
-                    if (!otpGroups[key]) otpGroups[key] = [];
-                    otpGroups[key].push(m);
-                }
-            });
-
-            const twentyMinsAgo = new Date(Date.now() - 20 * 60 * 1000);
-            
-            const rawRecentOrders = await Order.find({ 
-                createdAt: { $gte: twentyMinsAgo }
-            })
-            .sort({ createdAt: -1 }) 
-            .select("_id searchNumber userEmail fullMessage status processedKeys receivedNids createdAt").lean();
-
-            const activeLatestOrders = [];
-            const seenNumbers = new Set();
-
-            for (const order of rawRecentOrders) {
-                if (!order.searchNumber) continue;
-                const cleanSearchNum = String(order.searchNumber).replace(/\D/g, "");
-                if (cleanSearchNum.length < 6) continue;
-
-                if (seenNumbers.has(cleanSearchNum)) continue; 
-                seenNumbers.add(cleanSearchNum);
-
-                if (order.status === "FAIL" || order.status === "CANCEL") continue; 
-                activeLatestOrders.push(order);
-            }
-
-            const consumedOtpsInThisCycle = new Set();
-            const parallelDbTasks = [];
-
-            for (const order of activeLatestOrders) {
-                const cleanSearchNum = String(order.searchNumber).replace(/\D/g, "");
-                const searchKey = cleanSearchNum.length > 9 ? cleanSearchNum.slice(-9) : cleanSearchNum;
-                const matchedOtps = otpGroups[searchKey]; 
-
-                if (matchedOtps && matchedOtps.length > 0) {
-                    for (const matchedOtpObj of matchedOtps) {
-                        
-                        const uniqueProcessKey = String(matchedOtpObj.otp_id); 
-                        
-                        if (consumedOtpsInThisCycle.has(uniqueProcessKey)) continue; 
-                        
-                        const dbProcessedKeys = order.processedKeys || [];
-                        const dbReceivedNids = order.receivedNids || [];
-                        if (dbProcessedKeys.includes(uniqueProcessKey) || dbReceivedNids.includes(uniqueProcessKey)) {
-                            continue; 
-                        }
-
-                        const orderTimeMs = new Date(order.createdAt).getTime(); 
-                        let otpTimeMs = matchedOtpObj.time; 
-                        if (otpTimeMs < 10000000000) otpTimeMs = otpTimeMs * 1000; 
-
-                        if (otpTimeMs < (orderTimeMs - 86400000)) continue; 
-
-                        const incomingMsgRaw = (matchedOtpObj.message || "").toString().trim();
-                        const lowerMsg = incomingMsgRaw.toLowerCase();
-                        if (!incomingMsgRaw || lowerMsg.includes("waiting") || ["pending", "null", "false", "undefined"].includes(lowerMsg)) continue;
-                        
-                        const digitCount = (incomingMsgRaw.match(/\d/g) || []).length;
-                        if (digitCount < 3) continue; 
-                        
-                        let incomingCode = extractStrictOTP(incomingMsgRaw); 
-
-                        let finalMessageToSave = incomingMsgRaw; 
-
-                        let user = globalWorkerUserCache.get(order.userEmail);
-                        if (!user) {
-                            user = await User.findOne({ email: order.userEmail }).lean();
-                            if (user) globalWorkerUserCache.set(order.userEmail, user);
-                        }
-                        if (!user) continue;
-
-                        const isFreeService = lowerMsg.includes("whatsapp") || lowerMsg.includes("telegram") || lowerMsg.includes("t.me");
-                        let rawOtpCost = isFreeService ? 0 : (Number(user.otpRate) || 0);
-                        let otpCost = Math.abs(rawOtpCost); 
-                        
-                        let otpCommission = 0; let agentId = null;
-                        if (!isFreeService && user.agentEmail) {
-                            let agent = globalWorkerUserCache.get(user.agentEmail);
-                            if (!agent) {
-                                agent = await User.findOne({ $or: [{ email: user.agentEmail }, { customAgentMail: user.agentEmail }], role: "agent" }).lean();
-                                if (agent) globalWorkerUserCache.set(user.agentEmail, agent);
-                            }
-                            if (agent) {
-                                agentId = agent._id;
-                                let rawComm = Math.max(0, Number(((Number(agent.agentMaxRate) || 0.70) - otpCost).toFixed(2)));
-                                otpCommission = Math.abs(rawComm);
-                            }
-                        }
-
-                        consumedOtpsInThisCycle.add(uniqueProcessKey);
-
-                        const dbTask = (async () => {
-                            const updatedOrder = await Order.findOneAndUpdate(
-                                { 
-                                    _id: order._id, 
-                                    processedKeys: { $ne: uniqueProcessKey }
-                                },
-                                { 
-                                    $set: { 
-                                        status: "DONE", 
-                                        otp: incomingCode, 
-                                        fullMessage: order.fullMessage && order.fullMessage !== "Waiting..." ? order.fullMessage + " _||_ " + finalMessageToSave : finalMessageToSave,
-                                        expireAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000) 
-                                    },
-                                    $inc: { orderCost: otpCost, orderCommission: otpCommission },
-                                    $addToSet: { processedKeys: uniqueProcessKey, receivedNids: uniqueProcessKey } 
-                                },
-                                { returnDocument: 'after', strict: false }
-                            );
-
-                            if (updatedOrder && (otpCost > 0 || otpCommission > 0)) {
-                                if (otpCost > 0) {
-                                    const updatedUser = await User.findOneAndUpdate({ _id: user._id }, { $inc: { balance: otpCost } }, { returnDocument: 'after' });
-                                    if (updatedUser && (updatedUser.autoPayEnabled === true || updatedUser.autoPayEnabled === "true") && updatedUser.balance >= 150) {
-                                        triggerBinanceAutoPay(updatedUser).catch(() => {});
-                                    }
-                                }
-                                if (otpCommission > 0 && agentId) {
-                                    await User.updateOne({ _id: agentId }, { $inc: { agentEarning: otpCommission, balance: otpCommission } });
-                                }
-                            }
-                        })();
-
-                        parallelDbTasks.push(dbTask);
-                    }
-                }
-            }
-
-            if (parallelDbTasks.length > 0) {
-                await Promise.allSettled(parallelDbTasks);
-            }
-        }
-    } catch (error) {
-        console.error("Background Sync Error:", error.message);
-    } finally {
-        isSyncing = false; 
-    }
-};
-
-setInterval(syncMNITBackground, 2500); 
 
 fastify.get('/v1/numsuccess/info', async (request, reply) => {
     try {
