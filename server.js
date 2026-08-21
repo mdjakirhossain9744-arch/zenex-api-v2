@@ -58,14 +58,15 @@ const fetchIPRNTrunk = async () => {
         });
         const data = await res.json();
         
-        // 💥 THE BOSS FIX: LOGGING EXACT IPRN RESPONSE TO FIND THE ISSUE 💥
-        console.log("🔍 IPRN TRUNK API RESPONSE:", JSON.stringify(data));
-        
-        if (data && data.result && data.result.length > 0) {
-            IPRN_TRUNK_ID = data.result[0].trunk_id || data.result[0].id;
-            console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded: [${IPRN_TRUNK_ID}]`);
+        // 💥 THE BOSS FIX: PARSING THE CORRECT 'trunk_list' ARRAY 💥
+        if (data && data.result && data.result.trunk_list && data.result.trunk_list.length > 0) {
+            // Priority: Select the "OTP" trunk if available, else pick the first one
+            const otpTrunk = data.result.trunk_list.find(t => t.name && t.name.toLowerCase() === "otp");
+            IPRN_TRUNK_ID = otpTrunk ? otpTrunk.id : data.result.trunk_list[0].id;
+            
+            console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded: [${IPRN_TRUNK_ID}] (Name: ${otpTrunk ? otpTrunk.name : data.result.trunk_list[0].name})`);
         } else {
-            console.warn("⚠️ IPRN Trunk list is empty. Retrying in 10s...");
+            console.warn("⚠️ IPRN Trunk list is empty or invalid format. Retrying in 10s...");
             setTimeout(fetchIPRNTrunk, 10000);
         }
     } catch (err) {
@@ -667,7 +668,7 @@ const startServer = async () => {
     try {
         await connectDB();
         await fetchIPRNTrunk(); 
-        await fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' }); // 💥 V2 PORT FIXED 💥
+        await fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' });
         console.log(`⚡ ZENEX Microservice V2 is LIVE at: http://localhost:${process.env.PORT || 5000}`);
     } catch (err) { process.exit(1); }
 };
