@@ -257,10 +257,10 @@ fastify.route({
 
             let response;
             try {
-                // 💥 THE BOSS FIX: CORRECT METHOD (sms.number:allocate) & TARGET AS OBJECT 💥
+                // 💥 THE BOSS FIX: CORRECT IPRN METHOD (sms:allocate) WITH EXACT VALIDATION PAYLOAD 💥
                 const payload = {
                     jsonrpc: "2.0",
-                    method: "sms.number:allocate",
+                    method: "sms:allocate",
                     params: { 
                         trunk_id: IPRN_TRUNK_ID,
                         target: {
