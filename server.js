@@ -58,12 +58,9 @@ const fetchIPRNTrunk = async () => {
         });
         const data = await res.json();
         
-        // 💥 THE BOSS FIX: PARSING THE CORRECT 'trunk_list' ARRAY 💥
         if (data && data.result && data.result.trunk_list && data.result.trunk_list.length > 0) {
-            // Priority: Select the "OTP" trunk if available, else pick the first one
             const otpTrunk = data.result.trunk_list.find(t => t.name && t.name.toLowerCase() === "otp");
             IPRN_TRUNK_ID = otpTrunk ? otpTrunk.id : data.result.trunk_list[0].id;
-            
             console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded: [${IPRN_TRUNK_ID}] (Name: ${otpTrunk ? otpTrunk.name : data.result.trunk_list[0].name})`);
         } else {
             console.warn("⚠️ IPRN Trunk list is empty or invalid format. Retrying in 10s...");
@@ -227,12 +224,14 @@ fastify.route({
             const cleanKey = apiKey.trim();
             let user;
 
+            // 💥 THE BOSS FIX: ZERO DB LOAD FOR DASHBOARD BYPASS 💥
             if (cleanKey === "ZENEX_INTERNAL_DASHBOARD_PASS") {
                 const dashEmail = request.headers['x-dashboard-user'];
-                user = await User.findOne({ email: dashEmail }).lean();
-                if (!user || user.status !== "active") {
-                    return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized Dashboard User" });
+                if (!dashEmail) {
+                    return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized Dashboard Request" });
                 }
+                // We completely trust Next.js verification. No need to query DB again!
+                user = { email: dashEmail }; 
             } else {
                 let cachedObj = apiAuthCache.get(cleanKey);
                 if (!cachedObj || Date.now() > cachedObj.expiry) {
