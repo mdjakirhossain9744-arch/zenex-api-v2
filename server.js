@@ -257,13 +257,15 @@ fastify.route({
 
             let response;
             try {
-                // 💥 THE BOSS FIX: STRICT IPRN PAYLOAD (VALIDATION FIXED) 💥
+                // 💥 THE BOSS FIX: CORRECT METHOD (sms.number:allocate) & TARGET AS OBJECT 💥
                 const payload = {
                     jsonrpc: "2.0",
-                    method: "sms.trunk:allocate",
+                    method: "sms.number:allocate",
                     params: { 
                         trunk_id: IPRN_TRUNK_ID,
-                        target: String(rid),
+                        target: {
+                            prefix_list: [String(rid)]
+                        },
                         numbers: 1
                     },
                     id: Date.now()
