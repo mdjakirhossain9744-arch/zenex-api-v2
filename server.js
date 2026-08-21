@@ -10,13 +10,14 @@ import fastifyCompress from '@fastify/compress';
 
 dotenv.config();
 
-const fastify = Fastify({ logger: false });
+const fastify = Fastify({ logger: false, trustProxy: true });
 const redis = new Redis(); 
 
 fastify.register(fastifyCors, { 
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'mapikey']
+    // 💥 THE BOSS FIX: Allowed 'x-dashboard-user' for Bypass Protocol
+    allowedHeaders: ['Content-Type', 'mapikey', 'x-dashboard-user']
 });
 
 fastify.register(fastifyFormbody); 
@@ -41,6 +42,36 @@ const getUTCDateString = (dateObj = new Date()) => new Date(dateObj).toISOString
 
 const REAL_API_KEY = "MJI4KV0N1CN"; 
 const BASE_API_URL = "https://api.2oo9.cloud/MXS47FLFX0U/tnemn/@public/api";
+
+// ==========================================
+// 💥 IPRN ELITE JSON-RPC CONFIG 💥
+// ==========================================
+const IPRN_API_URL = "https://api.iprn-elite.com/v1.0";
+const IPRN_API_KEY = process.env.IPRN_API_KEY || "1ddOYcGxRcWUlyi6T7oZzA"; 
+let IPRN_TRUNK_ID = null;
+
+const fetchIPRNTrunk = async () => {
+    try {
+        const payload = { jsonrpc: "2.0", method: "sms.trunk:get_list", params: {}, id: Date.now() };
+        const res = await fetch(IPRN_API_URL, {
+            method: "POST",
+            headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        
+        if (data && data.result && data.result.length > 0) {
+            IPRN_TRUNK_ID = data.result[0].trunk_id || data.result[0].id;
+            console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded: [${IPRN_TRUNK_ID}]`);
+        } else {
+            console.warn("⚠️ IPRN Trunk list is empty. Retrying in 10s...");
+            setTimeout(fetchIPRNTrunk, 10000);
+        }
+    } catch (err) {
+        console.error("❌ Failed to fetch IPRN Trunk ID:", err.message);
+        setTimeout(fetchIPRNTrunk, 10000);
+    }
+};
 
 const apiAuthCache = new Map();
 const globalWorkerUserCache = new Map(); 
@@ -193,17 +224,29 @@ fastify.route({
             if (!apiKey || apiKey.trim().length < 10) return reply.status(401).send({ meta: { status: "error" }, message: "Invalid API Key" });
 
             const cleanKey = apiKey.trim();
-            
-            let cachedObj = apiAuthCache.get(cleanKey);
             let user;
 
-            if (!cachedObj || Date.now() > cachedObj.expiry) {
-                user = await User.findOne({ apiKey: cleanKey }).lean();
-                if (!user || !user.isApiActive || user.status !== "active") return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized" });
-                apiAuthCache.set(cleanKey, { user, expiry: Date.now() + 60000 });
+            // 💥 THE BOSS FIX: Internal Dashboard Bypass 💥
+            if (cleanKey === "ZENEX_INTERNAL_DASHBOARD_PASS") {
+                const dashEmail = request.headers['x-dashboard-user'];
+                user = await User.findOne({ email: dashEmail }).lean();
+                if (!user || user.status !== "active") {
+                    return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized Dashboard User" });
+                }
             } else {
-                user = cachedObj.user;
+                let cachedObj = apiAuthCache.get(cleanKey);
+                if (!cachedObj || Date.now() > cachedObj.expiry) {
+                    user = await User.findOne({ apiKey: cleanKey }).lean();
+                    if (!user || !user.isApiActive || user.status !== "active") {
+                        return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized API User" });
+                    }
+                    apiAuthCache.set(cleanKey, { user, expiry: Date.now() + 60000 });
+                } else {
+                    user = cachedObj.user;
+                }
             }
+
+            if (!IPRN_TRUNK_ID) return reply.status(503).send({ meta: { status: "error" }, message: "System Initializing. Please wait." });
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000); 
@@ -220,14 +263,18 @@ fastify.route({
 
             let response;
             try {
-                response = await fetch(`${BASE_API_URL}/getnum`, {
+                // 💥 IPRN ALLOCATION LOGIC 💥
+                const payload = {
+                    jsonrpc: "2.0",
+                    method: "sms.allocation:template_by_account_user",
+                    params: { trunk_id: IPRN_TRUNK_ID, template: rid },
+                    id: Date.now()
+                };
+
+                response = await fetch(IPRN_API_URL, {
                     method: "POST",
-                    headers: { 
-                        "mauthapi": REAL_API_KEY, 
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    },
-                    body: JSON.stringify({ rid }),
+                    headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
                     signal: controller.signal
                 });
                 clearTimeout(timeoutId);
@@ -239,16 +286,18 @@ fastify.route({
             let data;
             try { data = await response.json(); } catch(e) { return reply.status(502).send({ meta: { status: "error" }, message: "Invalid upstream response" }); }
 
-            if (data.meta?.code === 200 && data.data) {
+            if (data.result && data.result.number) {
                 const todayStr = getUTCDateString();
+                const providerNumber = data.result.number; 
+                const fullNum = providerNumber.includes('+') ? providerNumber.replace('+', '') : providerNumber;
                 
                 setImmediate(() => {
                     const newOrder = new Order({
                         userEmail: user.email,
-                        searchNumber: data.data.no_plus_number,
-                        displayNumber: data.data.full_number,
-                        country: data.data.country || "Unknown",
-                        operator: data.data.operator || "Any",
+                        searchNumber: fullNum,
+                        displayNumber: `+${fullNum}`,
+                        country: data.result.country || "Unknown",
+                        operator: data.result.operator || "Any",
                         status: "WAIT",
                         fullMessage: "Waiting...",
                         otp: "Waiting...", 
@@ -261,18 +310,19 @@ fastify.route({
                 return reply.status(200).send({
                     meta: { status: "success", code: 200 },
                     data: {
-                        copy: data.data.full_number,
-                        number: data.data.full_number,
-                        full_number: data.data.no_plus_number,
-                        country: data.data.country,
+                        copy: `+${fullNum}`,
+                        number: `+${fullNum}`,
+                        full_number: fullNum,
+                        country: data.result.country || "Unknown",
                         iso: "Unknown",
-                        operator: data.data.operator,
+                        operator: data.result.operator || "Any",
                         status: "pending"
                     }
                 });
             }
 
-            return reply.status(400).send({ meta: { status: "error" }, message: data.message || "Out of stock" });
+            console.error("⚠️ IPRN Rejection Log:", JSON.stringify(data));
+            return reply.status(400).send({ meta: { status: "error" }, message: data.error?.message || "Out of stock" });
         } catch (error) {
             return reply.status(500).send({ meta: { status: "error" }, message: "Server Error" });
         }
@@ -516,7 +566,7 @@ fastify.get('/v1/numsuccess/info', async (request, reply) => {
             const numberClean = String(order.displayNumber || order.searchNumber || "").replace(/\D/g, "");
             const baseNid = "ZX_" + order._id.toString().substring(0, 10).toUpperCase();
 
-            // 💥 BOSS UPGRADE: UNIFORM NID INDEXING FOR ALL OTPS (ZERO MEMORY LEAK) 💥
+            // 💥 BOSS UPGRADE: UNIFORM NID INDEXING FOR ALL OTPS (MULTI-OTP) 💥
             let rawMsg = order.fullMessage || order.otp || "";
             if (rawMsg.includes("_||_")) {
                 const msgsArray = rawMsg.split("_||_").map(m => m.trim()).filter(Boolean);
@@ -531,7 +581,6 @@ fastify.get('/v1/numsuccess/info', async (request, reply) => {
                     });
                 });
             } else {
-                // For single OTP, we also strictly append _0 to maintain standard format for bots
                 expandedOtps.push({ 
                     nid: `${baseNid}_0`, 
                     number: numberClean, 
@@ -638,6 +687,7 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
 const startServer = async () => {
     try {
         await connectDB();
+        await fetchIPRNTrunk(); // 💥 Auto fetch Trunk on boot!
         await fastify.listen({ port: process.env.PORT || 4000, host: '0.0.0.0' });
         console.log(`⚡ ZENEX Microservice V7 (Leader Protocol Active) is LIVE at: http://localhost:${process.env.PORT || 4000}`);
     } catch (err) { process.exit(1); }
