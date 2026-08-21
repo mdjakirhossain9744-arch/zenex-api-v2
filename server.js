@@ -5,7 +5,6 @@ import { User, Order } from './models.js';
 import fastifyFormbody from '@fastify/formbody'; 
 import fastifyCors from '@fastify/cors'; 
 import Redis from "ioredis"; 
-// 💥 THE BOSS FIX: COMPRESSION ENGINE FOR SLOW NETWORKS & VPN 💥
 import fastifyCompress from '@fastify/compress'; 
 
 dotenv.config();
@@ -16,7 +15,6 @@ const redis = new Redis();
 fastify.register(fastifyCors, { 
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
-    // 💥 THE BOSS FIX: Allowed 'x-dashboard-user' for Bypass Protocol
     allowedHeaders: ['Content-Type', 'mapikey', 'x-dashboard-user']
 });
 
@@ -60,6 +58,9 @@ const fetchIPRNTrunk = async () => {
         });
         const data = await res.json();
         
+        // 💥 THE BOSS FIX: LOGGING EXACT IPRN RESPONSE TO FIND THE ISSUE 💥
+        console.log("🔍 IPRN TRUNK API RESPONSE:", JSON.stringify(data));
+        
         if (data && data.result && data.result.length > 0) {
             IPRN_TRUNK_ID = data.result[0].trunk_id || data.result[0].id;
             console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded: [${IPRN_TRUNK_ID}]`);
@@ -91,7 +92,6 @@ async function getMaskingKeywords() {
     }
 }
 
-// 💥 BOSS UPGRADE: STRICT OTP EXTRACTOR FOR DASHBOARD DB ONLY 💥
 const extractStrictOTP = (rawText) => {
     if (!rawText) return "00000";
     const match = rawText.match(/(?:\b\d{4,8}\b)|(?:\b\d{3}[\s-]\d{3,4}\b)/);
@@ -226,7 +226,6 @@ fastify.route({
             const cleanKey = apiKey.trim();
             let user;
 
-            // 💥 THE BOSS FIX: Internal Dashboard Bypass 💥
             if (cleanKey === "ZENEX_INTERNAL_DASHBOARD_PASS") {
                 const dashEmail = request.headers['x-dashboard-user'];
                 user = await User.findOne({ email: dashEmail }).lean();
@@ -263,7 +262,6 @@ fastify.route({
 
             let response;
             try {
-                // 💥 IPRN ALLOCATION LOGIC 💥
                 const payload = {
                     jsonrpc: "2.0",
                     method: "sms.allocation:template_by_account_user",
@@ -334,7 +332,6 @@ let isSyncing = false;
 const syncMNITBackground = async () => {
     if (isSyncing) return; 
 
-    // 💥 BOSS SPEED UPGRADE: REDUCED REDIS LOCK TO 2 SECONDS FOR FASTER POLLING 💥
     const lockAcquired = await redis.set("master_otp_sync_lock", "locked", "NX", "EX", 2);
     if (!lockAcquired) return; 
 
@@ -440,7 +437,6 @@ const syncMNITBackground = async () => {
                         const digitCount = (incomingMsgRaw.match(/\d/g) || []).length;
                         if (digitCount < 3) continue; 
                         
-                        // 💥 DB SAVE: STRICT OTP ONLY 💥
                         let incomingCode = extractStrictOTP(incomingMsgRaw); 
 
                         let finalMessageToSave = incomingMsgRaw; 
@@ -520,12 +516,8 @@ const syncMNITBackground = async () => {
     }
 };
 
-// 💥 BOSS SPEED UPGRADE: CRON RUNS EVERY 2.5 SECONDS FOR ULTRA-LOW LATENCY 💥
 setInterval(syncMNITBackground, 2500); 
 
-// ==========================================
-// USER API ENDPOINTS
-// ==========================================
 fastify.get('/v1/numsuccess/info', async (request, reply) => {
     try {
         const apiKey = request.headers['mapikey'];
@@ -566,39 +558,27 @@ fastify.get('/v1/numsuccess/info', async (request, reply) => {
             const numberClean = String(order.displayNumber || order.searchNumber || "").replace(/\D/g, "");
             const baseNid = "ZX_" + order._id.toString().substring(0, 10).toUpperCase();
 
-            // 💥 BOSS UPGRADE: UNIFORM NID INDEXING FOR ALL OTPS (MULTI-OTP) 💥
             let rawMsg = order.fullMessage || order.otp || "";
             if (rawMsg.includes("_||_")) {
                 const msgsArray = rawMsg.split("_||_").map(m => m.trim()).filter(Boolean);
                 msgsArray.forEach((msg, idx) => {
                     expandedOtps.push({ 
-                        nid: `${baseNid}_${idx}`, 
-                        number: numberClean, 
-                        otp: applyMasking(msg, hiddenKeywords), 
-                        country: order.country || "Unknown", 
-                        operator: order.operator || "Any", 
-                        created_at: formattedDate 
+                        nid: `${baseNid}_${idx}`, number: numberClean, otp: applyMasking(msg, hiddenKeywords), 
+                        country: order.country || "Unknown", operator: order.operator || "Any", created_at: formattedDate 
                     });
                 });
             } else {
                 expandedOtps.push({ 
-                    nid: `${baseNid}_0`, 
-                    number: numberClean, 
-                    otp: applyMasking(rawMsg, hiddenKeywords), 
-                    country: order.country || "Unknown", 
-                    operator: order.operator || "Any", 
-                    created_at: formattedDate 
+                    nid: `${baseNid}_0`, number: numberClean, otp: applyMasking(rawMsg, hiddenKeywords), 
+                    country: order.country || "Unknown", operator: order.operator || "Any", created_at: formattedDate 
                 });
             }
         });
 
         const validOtps = expandedOtps.filter(o => o.otp && o.otp.trim() !== "" && !["waiting...", "pending", "null"].includes(o.otp.toLowerCase()));
-        
-        // 💥 BOSS SPEED UPGRADE: CACHE REDUCED TO 1.5 SECONDS FOR REAL-TIME DELIVERY 💥
         userOtpResponseCache.set(cleanKey, { otps: validOtps, expiry: Date.now() + 1500 });
         
         return reply.status(200).send({ meta: { status: "success", code: 200 }, data: { otps: validOtps } });
-
     } catch (error) { return reply.status(500).send({ meta: { status: "error" } }); }
 });
 
@@ -675,7 +655,6 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
         const orders = await Order.find({ userEmail: user.email, dateString: todayStr, status: "DONE" }).select("displayNumber otp fullMessage -_id").lean();
         if (orders.length === 0) return reply.type('text/plain').send("NO_DATA");
         
-        // 💥 BOSS UPGRADE: REVERTED TO FULL MASKED MESSAGE FOR TEXT EXPORT 💥
         const textData = orders.map((o) => {
             return `${String(o.displayNumber).replace(/\D/g, "")}|${applyMasking(o.fullMessage || o.otp || "", hiddenKeywords)}`;
         }).join('\n');
@@ -687,9 +666,9 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
 const startServer = async () => {
     try {
         await connectDB();
-        await fetchIPRNTrunk(); // 💥 Auto fetch Trunk on boot!
-        await fastify.listen({ port: process.env.PORT || 4000, host: '0.0.0.0' });
-        console.log(`⚡ ZENEX Microservice V7 (Leader Protocol Active) is LIVE at: http://localhost:${process.env.PORT || 4000}`);
+        await fetchIPRNTrunk(); 
+        await fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' }); // 💥 V2 PORT FIXED 💥
+        console.log(`⚡ ZENEX Microservice V2 is LIVE at: http://localhost:${process.env.PORT || 5000}`);
     } catch (err) { process.exit(1); }
 };
 startServer();
