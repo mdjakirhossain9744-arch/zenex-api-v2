@@ -224,13 +224,11 @@ fastify.route({
             const cleanKey = apiKey.trim();
             let user;
 
-            // 💥 THE BOSS FIX: ZERO DB LOAD FOR DASHBOARD BYPASS 💥
             if (cleanKey === "ZENEX_INTERNAL_DASHBOARD_PASS") {
                 const dashEmail = request.headers['x-dashboard-user'];
                 if (!dashEmail) {
                     return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized Dashboard Request" });
                 }
-                // We completely trust Next.js verification. No need to query DB again!
                 user = { email: dashEmail }; 
             } else {
                 let cachedObj = apiAuthCache.get(cleanKey);
@@ -262,10 +260,14 @@ fastify.route({
 
             let response;
             try {
+                // 💥 THE BOSS FIX: MIGRATED TO REALTIME ENGINE 💥
                 const payload = {
                     jsonrpc: "2.0",
-                    method: "sms.allocation:template_by_account_user",
-                    params: { trunk_id: IPRN_TRUNK_ID, template: rid },
+                    method: "sms.realtime:allocate",
+                    params: { 
+                        prefix_list: [String(rid)], 
+                        dont_check_access: true 
+                    },
                     id: Date.now()
                 };
 
@@ -284,9 +286,10 @@ fastify.route({
             let data;
             try { data = await response.json(); } catch(e) { return reply.status(502).send({ meta: { status: "error" }, message: "Invalid upstream response" }); }
 
-            if (data.result && data.result.number) {
+            // 💥 REALTIME RESPONSE PARSING 💥
+            if (data.result && data.result.reply === "success" && data.result.number && data.result.number.full) {
                 const todayStr = getUTCDateString();
-                const providerNumber = data.result.number; 
+                const providerNumber = String(data.result.number.full); 
                 const fullNum = providerNumber.includes('+') ? providerNumber.replace('+', '') : providerNumber;
                 
                 setImmediate(() => {
@@ -294,8 +297,8 @@ fastify.route({
                         userEmail: user.email,
                         searchNumber: fullNum,
                         displayNumber: `+${fullNum}`,
-                        country: data.result.country || "Unknown",
-                        operator: data.result.operator || "Any",
+                        country: data.result.number.country_code || "Unknown",
+                        operator: "Any",
                         status: "WAIT",
                         fullMessage: "Waiting...",
                         otp: "Waiting...", 
@@ -311,16 +314,19 @@ fastify.route({
                         copy: `+${fullNum}`,
                         number: `+${fullNum}`,
                         full_number: fullNum,
-                        country: data.result.country || "Unknown",
+                        country: data.result.number.country_code || "Unknown",
                         iso: "Unknown",
-                        operator: data.result.operator || "Any",
+                        operator: "Any",
                         status: "pending"
                     }
                 });
             }
 
             console.error("⚠️ IPRN Rejection Log:", JSON.stringify(data));
-            return reply.status(400).send({ meta: { status: "error" }, message: data.error?.message || "Out of stock" });
+            return reply.status(400).send({ 
+                meta: { status: "error" }, 
+                message: data.result?.reply || data.error?.message || "Out of stock or Invalid Range" 
+            });
         } catch (error) {
             return reply.status(500).send({ meta: { status: "error" }, message: "Server Error" });
         }
