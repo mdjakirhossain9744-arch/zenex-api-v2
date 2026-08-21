@@ -260,13 +260,16 @@ fastify.route({
 
             let response;
             try {
-                // 💥 THE BOSS FIX: MIGRATED TO REALTIME ENGINE 💥
+                // 💥 THE BOSS FIX: REVERTED TO TEMPLATE METHOD (STRICT VALIDATION) 💥
                 const payload = {
                     jsonrpc: "2.0",
-                    method: "sms.realtime:allocate",
+                    method: "sms.trunk:allocate",
                     params: { 
-                        prefix_list: [String(rid)], 
-                        dont_check_access: true 
+                        trunk_id: IPRN_TRUNK_ID,
+                        target: {
+                            prefix_list: [String(rid)]
+                        },
+                        numbers: 1
                     },
                     id: Date.now()
                 };
