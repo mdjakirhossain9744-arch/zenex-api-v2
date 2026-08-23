@@ -56,7 +56,8 @@ const fetchIPRNTrunk = async () => {
         const data = await res.json();
         
         if (data && data.result && data.result.trunk_list && data.result.trunk_list.length > 0) {
-            const otpTrunk = data.result.trunk_list.find(t => t.name && t.name.toLowerCase() === "otp");
+            // 💥 BOSS FIX: TEMPORARILY SWITCHED TO 'GLOBAL ACCESS' TRUNK TO TEST PERMISSIONS 💥
+            const otpTrunk = data.result.trunk_list.find(t => t.name && t.name.toLowerCase() === "global access");
             IPRN_TRUNK_ID = otpTrunk ? otpTrunk.id : data.result.trunk_list[0].id;
             console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded: [${IPRN_TRUNK_ID}] (Name: ${otpTrunk ? otpTrunk.name : data.result.trunk_list[0].name})`);
         } else {
