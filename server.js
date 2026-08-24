@@ -189,7 +189,10 @@ fastify.route({
             if (cleanKey === "ZENEX_INTERNAL_DASHBOARD_PASS") {
                 const dashEmail = request.headers['x-dashboard-user'];
                 if (!dashEmail) return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized Dashboard Request" });
-                user = { email: dashEmail }; 
+                
+                // 💥 ENTERPRISE FIX: Fetch full user to satisfy MongoDB Schema constraints
+                user = await User.findOne({ email: dashEmail }).lean();
+                if (!user) return reply.status(403).send({ meta: { status: "error" }, message: "User not found in Database" });
             } else {
                 let cachedObj = apiAuthCache.get(cleanKey);
                 if (!cachedObj || Date.now() > cachedObj.expiry) {
@@ -276,11 +279,18 @@ fastify.route({
                 clearTimeout(timeoutId);
                 const todayStr = getUTCDateString();
                 
-                // 💥 SECURE DB SAVE & ID EXTRACTION 💥
+                // 💥 ENTERPRISE FIX: SECURE DB SAVE CONFORMING TO STRICT SCHEMA 💥
                 let generatedOrderId = null;
                 try {
+                    const matchedName = user.fullName || user.email.split("@")[0];
+                    const matchedUid = user.uid || user.zxId || (user._id ? `ZX-${user._id.toString().slice(-6).toUpperCase()}` : "ZX-UNKNOWN");
+                    const matchedAgent = (user.agentEmail || user.customAgentMail || "admin").toLowerCase(); 
+
                     const newOrder = new Order({
                         userEmail: user.email,
+                        userName: matchedName,         
+                        userUid: matchedUid,           
+                        agentEmail: matchedAgent,      
                         searchNumber: fullNumStr,
                         requestedRange: rawRange, 
                         trxId: String(trxId), 
