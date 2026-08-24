@@ -93,14 +93,26 @@ async function getMaskingKeywords() {
     }
 }
 
+const extractStrictOTP = (rawText) => {
+    if (!rawText) return "00000";
+    const match = rawText.match(/(?:\b\d{4,8}\b)|(?:\b\d{3}[\s-]\d{3,4}\b)/);
+    return match ? match[0].trim() : "00000";
+};
+
+const escapeRegExp = (string) => {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
 const applyMasking = (text, keywords) => {
     if (!text) return text;
     let masked = text;
     keywords.forEach(w => {
         const word = w.trim();
         if (word && word.length > 1) {
-            const regex = new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-            masked = masked.replace(regex, (match) => match.replace(/[^\s]/g, '*'));
+            const regex = new RegExp(escapeRegExp(word), 'gi');
+            masked = masked.replace(regex, (match) => {
+                return match.replace(/[^\s]/g, '*');
+            });
         }
     });
     return masked;
@@ -108,20 +120,99 @@ const applyMasking = (text, keywords) => {
 
 setInterval(() => {
     const now = Date.now();
-    for (const [key, value] of apiAuthCache.entries()) if (now > value.expiry) apiAuthCache.delete(key);
-    for (const [key, value] of userOtpResponseCache.entries()) if (now > value.expiry) userOtpResponseCache.delete(key);
+    for (const [key, value] of apiAuthCache.entries()) {
+        if (now > value.expiry) apiAuthCache.delete(key);
+    }
+    for (const [key, value] of userOtpResponseCache.entries()) {
+        if (now > value.expiry) userOtpResponseCache.delete(key);
+    }
 }, 30000); 
+
+setInterval(() => { globalWorkerUserCache.clear(); }, 5 * 60 * 1000); 
+
+async function triggerBinanceAutoPay(user) {
+    try {
+        const res = await fetch(`${process.env.MAIN_SITE_URL}/api/cron/process-binance-payout`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: user._id })
+        });
+        const result = await res.json().catch(() => ({}));
+        if (result && result.success === false) {
+            await User.findOneAndUpdate({ _id: user._id }, { $set: { autoPayEnabled: false } });
+            if (globalWorkerUserCache.has(user.email)) {
+                let cachedUser = globalWorkerUserCache.get(user.email);
+                cachedUser.autoPayEnabled = false;
+                globalWorkerUserCache.set(user.email, cachedUser);
+            }
+        }
+    } catch (e) {}
+}
 
 const extractServiceName = (msg) => {
     if (!msg) return "Other";
     const text = msg.toLowerCase();
-    if (text.includes('facebook') || text.includes(' fb ')) return 'Facebook';
-    if (text.includes('whatsapp') || text.includes(' wa ')) return 'WhatsApp';
-    if (text.includes('telegram') || text.includes('t.me')) return 'Telegram';
-    if (text.includes('instagram') || text.includes(' ig ')) return 'Instagram';
-    if (text.includes('google') || text.includes('gmail')) return 'Google';
-    if (text.includes('tiktok') || text.includes(' tt ')) return 'TikTok';
-    if (text.includes('twitter') || text.includes(' x ')) return 'X';
+
+    if (text.includes('facebook') || text.includes(' fb ') || text.includes('facebk') || text.includes('fb.me') || text.includes('h29q+fsn4sr') || text.includes('laz+nxcarlw') || text.includes('فيسبوك') || text.includes('फेसबुक') || text.includes('ফেসবুক') || text.includes('脸书') || text.includes('ፌስቡክ') || text.includes('ფეისბუქი')) return 'Facebook';
+    if (text.includes('whatsapp') || text.includes(' wa ') || text.includes('vwaq') || text.includes('wa.me') || text.includes('واتساب') || text.includes('वाट्सएप') || text.includes('হোয়াটসঅ্যাপ') || text.includes('వాట్సాప్') || text.includes('왓츠앱')) return 'WhatsApp';
+    if (text.includes('telegram') || text.includes('t.me') || text.includes('تيليجرام') || text.includes('टेलीग्राम') || text.includes('টেলিগ্রাম') || text.includes('телеграм') || text.includes('电报') || text.includes('ቴሌግራም')) return 'Telegram';
+    if (text.includes('instagram') || text.includes(' ig ') || text.includes('ig.me') || text.includes('انستجرام') || text.includes('इंस्टाग्राम') || text.includes('ইন্সটাগ্রাম') || text.includes('인스타그램')) return 'Instagram';
+    if (text.includes('google') || /g-\d+/.test(text) || text.includes('gmail') || text.includes('youtube') || text.includes('g.co') || text.includes('جوجل') || text.includes('गूगल') || text.includes('গুগল') || text.includes('谷歌') || text.includes('구글') || text.includes('гугл')) return 'Google';
+    
+    if (text.includes('w5eue21qadh') || text.includes('imo') || text.includes('ايمو') || text.includes('ইমো')) return 'IMO';
+    if (text.includes('ftptmjpdh') || text.includes('viber') || text.includes('فايبر') || text.includes('ভাইবার')) return 'Viber';
+    
+    if (text.includes('meta')) return 'Meta';
+    if (text.includes('lalamove')) return 'Lalamove'; 
+    if (text.includes('tiktok') || text.includes(' tt ') || text.includes('تيك توك') || text.includes('टिकटॉक') || text.includes('টিকটক') || text.includes('틱톡')) return 'TikTok';
+    if (text.includes('snapchat')) return 'Snapchat';
+    if (text.includes('twitter') || text.includes(' x ') || text.includes('for x')) return 'X';
+    if (text.includes('apple') || text.includes('icloud')) return 'Apple';
+    if (text.includes('microsoft') || text.includes('live') || text.includes('outlook')) return 'Microsoft';
+    if (text.includes('amazon') || text.includes('prime')) return 'Amazon';
+    if (text.includes('netflix')) return 'Netflix';
+    if (text.includes('uber') && !text.includes('airbnb')) return 'Uber';
+    if (text.includes('paypal') || text.includes('pay pal')) return 'PayPal';
+    if (text.includes('cashapp') || text.includes('cash app')) return 'CashApp';
+    if (text.includes('venmo')) return 'Venmo';
+    if (text.includes('tinder')) return 'Tinder';
+    if (text.includes('bumble')) return 'Bumble';
+    if (text.includes('discord')) return 'Discord';
+    if (text.includes('twitch')) return 'Twitch';
+    if (text.includes('yahoo')) return 'Yahoo';
+    if (text.includes('wechat')) return 'WeChat';
+    if (text.includes('line')) return 'Line';
+    if (text.includes('kakaotalk')) return 'KakaoTalk';
+    if (text.includes('airbnb')) return 'Uber/Airbnb'; 
+    if (text.includes('binance') || text.includes('بینانس') || text.includes('बाइनेंस') || text.includes('বাইনান্স')) return 'Binance';
+    if (text.includes('coinbase')) return 'Coinbase';
+    if (text.includes('kucoin') && !text.includes('kraken')) return 'KuCoin';
+    if (text.includes('kraken')) return 'KuCoin/Kraken';
+    if (text.includes('epic games')) return 'Epic Games';
+    if (text.includes('steam')) return 'Steam';
+    if (text.includes('riot')) return 'Riot Games';
+    if (text.includes('daraz')) return 'Daraz';
+    if (text.includes('pathao')) return 'Pathao';
+    if (text.includes('foodpanda')) return 'Foodpanda';
+
+    const bracketMatch = msg.match(/(?:<|\[|【|\x1B<)\s*([A-Za-z0-9.\- ]{2,20})\s*(?:>|\]|】|\x1B>)/);
+    if (bracketMatch && bracketMatch[1]) {
+        const extracted = bracketMatch[1].trim();
+        const ignored = ["#", "code", "reply", "sms", "otp", "msg", "verification"];
+        if (!ignored.includes(extracted.toLowerCase())) {
+            return extracted.charAt(0).toUpperCase() + extracted.slice(1);
+        }
+    }
+
+    const opMatch = msg.match(/(?:operating on|code for|from)\s+([A-Za-z0-9.\-]{2,20})\b/i);
+    if (opMatch && opMatch[1]) {
+        const ext = opMatch[1].trim();
+        const ignored = ["the", "a", "an", "your", "this"];
+        if (!ignored.includes(ext.toLowerCase())) {
+            return ext.charAt(0).toUpperCase() + ext.slice(1);
+        }
+    }
+
     return "Other"; 
 };
 
@@ -204,12 +295,14 @@ fastify.route({
                 console.log(`✅ [SUCCESS] Number Allocated! Transaction ID: ${trxId}`);
                 
                 try {
+                    // BOSS FIX: Provider requires "target" wrapper for get_list method!
                     const fetchNumPayload = {
                         jsonrpc: "2.0",
                         method: "sms.trunk_number:get_list",
                         params: { 
-                            trunk_id: IPRN_SMS_TRUNK_ID, // FORCING TRUNK ID
-                            trunk_number_transaction_id: trxId 
+                            target: {
+                                trunk_number_transaction_id: trxId 
+                            }
                         },
                         id: Date.now()
                     };
@@ -222,7 +315,7 @@ fastify.route({
                     });
                     
                     const numData = await numRes.json();
-                    console.log(`🔍 [DEBUG] Step 2 Fetch Response:`, JSON.stringify(numData)); // 🚨 VERY IMPORTANT LOG
+                    console.log(`🔍 [DEBUG] Step 2 Fetch Response:`, JSON.stringify(numData));
                     
                     let trunkObj = null;
 
@@ -230,10 +323,16 @@ fastify.route({
                         trunkObj = numData.result.trunk_number_list[0];
                     } else {
                         console.log(`⚠️ [WARN] Step 2 empty list. Trying Fallback...`);
+                        // BOSS FIX: Fallback payload also needs "target" wrapper
                         const fallbackPayload = {
                             jsonrpc: "2.0",
                             method: "sms.trunk_number:get_list",
-                            params: { trunk_id: IPRN_SMS_TRUNK_ID },
+                            params: { 
+                                target: {
+                                    "sms.trunk_id": IPRN_SMS_TRUNK_ID 
+                                },
+                                limit: 1
+                            },
                             id: Date.now()
                         };
                         const fallRes = await fetch(IPRN_API_URL, { method: "POST", headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify(fallbackPayload) });
@@ -247,7 +346,6 @@ fastify.route({
 
                     clearTimeout(timeoutId);
 
-                    // EXTRACTING THE ACTUAL NUMBER STRING
                     let assignedNumber = trunkObj?.number || trunkObj?.full_number || trunkObj?.number?.full || null;
 
                     if (assignedNumber) {
@@ -370,6 +468,87 @@ fastify.get('/v1/numsuccess/info', async (request, reply) => {
         
         return reply.status(200).send({ meta: { status: "success", code: 200 }, data: { otps: validOtps } });
     } catch (error) { return reply.status(500).send({ meta: { status: "error" } }); }
+});
+
+let cachedActiveData = null;
+let lastFetchTime = 0;
+const CACHE_DURATION = 60 * 1000; 
+
+fastify.get('/v1/active-ranges', async (request, reply) => {
+    try {
+        if (cachedActiveData && (Date.now() - lastFetchTime < CACHE_DURATION)) {
+            return reply.send({ success: true, cached: true, data: cachedActiveData });
+        }
+
+        const hiddenKeywords = await getMaskingKeywords();
+
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        const recentOrders = await Order.find({ status: { $in: ["DONE", "Success", "SUCCESS"] }, updatedAt: { $gte: oneHourAgo } }).select("fullMessage otp searchNumber number").lean();
+        const rangeMap = {};
+
+        recentOrders.forEach((o) => {
+            let msg = o.fullMessage || o.otp || "";
+            const rawService = extractServiceName(msg);
+            const maskedService = applyMasking(rawService, hiddenKeywords); 
+
+            let num = o.searchNumber || o.number || "";
+            num = String(num).replace("+", "");
+            
+            if (num.length >= 6) {
+                const rangeStr = num.substring(0, 6) + "XXX"; 
+                let tag = "General";
+                if (rawService === "Facebook" || rawService === "Meta") {
+                    const match = msg.match(/\b\d{4,8}\b/);
+                    if (match) {
+                        if (match[0].length === 6 || match[0].length === 8) tag = "Fb Clone";
+                        else if (match[0].length === 5) tag = "New Fb";
+                    }
+                }
+                
+                const maskedTag = applyMasking(tag, hiddenKeywords); 
+
+                const key = `${rangeStr}|${maskedService}|${maskedTag}`;
+                if (!rangeMap[key]) rangeMap[key] = { range: rangeStr, service: maskedService, tag: maskedTag, hits: 0 };
+                rangeMap[key].hits += 1;
+            }
+        });
+
+        const formattedRanges = Object.values(rangeMap).sort((a, b) => b.hits - a.hits).slice(0, 10);
+        cachedActiveData = { active_ranges: formattedRanges };
+        lastFetchTime = Date.now();
+
+        return reply.send({ success: true, cached: false, data: cachedActiveData });
+    } catch (error) { return reply.status(500).send({ success: false, message: "Server Error" }); }
+});
+
+fastify.get('/v1/user/today-otps', async (request, reply) => {
+    try {
+        const apiKey = request.headers['mapikey'];
+        if (!apiKey) return reply.status(401).send({ error: "Invalid API Key" });
+        const cleanKey = apiKey.trim();
+        
+        let cachedObj = apiAuthCache.get(cleanKey);
+        let user;
+
+        if (!cachedObj || Date.now() > cachedObj.expiry) {
+            user = await User.findOne({ apiKey: cleanKey }).select("email").lean();
+        } else {
+            user = cachedObj.user;
+        }
+        
+        if (!user) return reply.status(401).send({ error: "Invalid API Key" });
+
+        const hiddenKeywords = await getMaskingKeywords();
+        const todayStr = getUTCDateString();
+        const orders = await Order.find({ userEmail: user.email, dateString: todayStr, status: "DONE" }).select("displayNumber otp fullMessage -_id").lean();
+        if (orders.length === 0) return reply.type('text/plain').send("NO_DATA");
+        
+        const textData = orders.map((o) => {
+            return `${String(o.displayNumber).replace(/\D/g, "")}|${applyMasking(o.fullMessage || o.otp || "", hiddenKeywords)}`;
+        }).join('\n');
+        
+        return reply.type('text/plain').send(textData);
+    } catch (error) { return reply.status(500).send({ error: "Server Error" }); }
 });
 
 const startServer = async () => {
