@@ -44,19 +44,17 @@ const getUTCDateString = (dateObj = new Date()) => new Date(dateObj).toISOString
 const IPRN_API_URL = "https://api.iprn-elite.com/v1.0";
 const IPRN_API_KEY = process.env.IPRN_API_KEY || "1ddOYcGxRcWUlyi6T7oZzA"; 
 
-// 💥 BOSS FIX: ENV Priority for Trunk ID 💥
-let IPRN_TRUNK_ID = process.env.IPRN_TRUNK_ID || null;
+// 💥 BOSS FIX: ENV Priority for SMS Trunk ID 💥
+let IPRN_SMS_TRUNK_ID = process.env.IPRN_SMS_TRUNK_ID || null;
 
 const fetchIPRNTrunk = async () => {
-    // If IPRN_TRUNK_ID is defined in .env, use it directly to bypass automatic fetching
-    if (process.env.IPRN_TRUNK_ID) {
-        IPRN_TRUNK_ID = process.env.IPRN_TRUNK_ID.trim();
-        console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded directly from .ENV: [${IPRN_TRUNK_ID}]`);
+    if (process.env.IPRN_SMS_TRUNK_ID) {
+        IPRN_SMS_TRUNK_ID = process.env.IPRN_SMS_TRUNK_ID.trim();
+        console.log(`🔥 IPRN Elite Connected! SMS Trunk ID Loaded directly from .ENV: [${IPRN_SMS_TRUNK_ID}]`);
         return;
     }
 
     try {
-        // YES BOSS, "sms.trunk:get_list" is correctly used here!
         const payload = { jsonrpc: "2.0", method: "sms.trunk:get_list", params: {}, id: Date.now() };
         const res = await fetch(IPRN_API_URL, {
             method: "POST",
@@ -67,8 +65,8 @@ const fetchIPRNTrunk = async () => {
         
         if (data && data.result && data.result.trunk_list && data.result.trunk_list.length > 0) {
             const otpTrunk = data.result.trunk_list.find(t => t.name && t.name.toLowerCase() === "global access");
-            IPRN_TRUNK_ID = otpTrunk ? otpTrunk.id : data.result.trunk_list[0].id;
-            console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded: [${IPRN_TRUNK_ID}] (Name: ${otpTrunk ? otpTrunk.name : data.result.trunk_list[0].name})`);
+            IPRN_SMS_TRUNK_ID = otpTrunk ? otpTrunk.id : data.result.trunk_list[0].id;
+            console.log(`🔥 IPRN Elite Connected! SMS Trunk ID Loaded: [${IPRN_SMS_TRUNK_ID}] (Name: ${otpTrunk ? otpTrunk.name : data.result.trunk_list[0].name})`);
         } else {
             console.warn("⚠️ IPRN Trunk list is empty or invalid format. Retrying in 10s...");
             setTimeout(fetchIPRNTrunk, 10000);
@@ -250,7 +248,7 @@ fastify.route({
                 }
             }
 
-            if (!IPRN_TRUNK_ID) return reply.status(503).send({ meta: { status: "error" }, message: "System Initializing. Please wait." });
+            if (!IPRN_SMS_TRUNK_ID) return reply.status(503).send({ meta: { status: "error" }, message: "System Initializing. Please wait." });
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000); 
@@ -267,19 +265,19 @@ fastify.route({
 
             let response;
             try {
-                // 💥 THE BOSS FIX: EXACT ALLOCATION METHOD FROM API DOCS 💥
-                // FIXED target key: "sms.trunk_id" instead of just "trunk_id"
+                // 💥 THE BOSS FIX: STRICT SMS API PAYLOAD FORMAT 💥
                 const payload = {
                     jsonrpc: "2.0",
-                    method: "allocation:template_by_account_user",
+                    method: "sms.allocation:template_by_account_user",
                     params: { 
                         target: {
-                            "sms.trunk_id": IPRN_TRUNK_ID
+                            "sms.trunk_id": IPRN_SMS_TRUNK_ID
                         },
                         template: String(rawRange).toUpperCase(),
-                        numbers: 1
+                        numbers: 1,
+                        random_number: true
                     },
-                    id: Date.now()
+                    id: null
                 };
 
                 response = await fetch(IPRN_API_URL, {
