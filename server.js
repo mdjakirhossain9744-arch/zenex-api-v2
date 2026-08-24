@@ -15,8 +15,7 @@ const redis = new Redis();
 fastify.register(fastifyCors, { 
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
-    // 💥 ALLOWING NEW CUSTOM HEADERS 💥
-    allowedHeaders: ['Content-Type', 'mapikey', 'x-dashboard-user', 'x-dashboard-name', 'x-dashboard-uid', 'x-dashboard-agent', 'User-Agent']
+    allowedHeaders: ['Content-Type', 'mapikey', 'User-Agent']
 });
 
 fastify.register(fastifyFormbody); 
@@ -39,9 +38,6 @@ const connectDB = async () => {
 
 const getUTCDateString = (dateObj = new Date()) => new Date(dateObj).toISOString().split('T')[0];
 
-// ==========================================
-// 💥 IPRN ELITE JSON-RPC CONFIG 💥
-// ==========================================
 const IPRN_API_URL = "https://api.iprn-elite.com/v1.0";
 const IPRN_API_KEY = process.env.IPRN_API_KEY || "1ddOYcGxRcWUlyi6T7oZzA"; 
 
@@ -53,27 +49,18 @@ const fetchIPRNTrunk = async () => {
         console.log(`🔥 IPRN Elite Connected! SMS Trunk ID Loaded directly from .ENV: [${IPRN_SMS_TRUNK_ID}]`);
         return;
     }
-
     try {
         const payload = { jsonrpc: "2.0", method: "sms.trunk:get_list", params: {}, id: Date.now() };
-        const res = await fetch(IPRN_API_URL, {
-            method: "POST",
-            headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
+        const res = await fetch(IPRN_API_URL, { method: "POST", headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         const data = await res.json();
-        
         if (data && data.result && data.result.trunk_list && data.result.trunk_list.length > 0) {
             const otpTrunk = data.result.trunk_list.find(t => t.name && t.name.toLowerCase() === "global access");
             IPRN_SMS_TRUNK_ID = otpTrunk ? otpTrunk.id : data.result.trunk_list[0].id;
             console.log(`🔥 IPRN Elite Connected! SMS Trunk ID Loaded: [${IPRN_SMS_TRUNK_ID}]`);
         } else {
-            console.warn("⚠️ IPRN Trunk list is empty. Retrying in 10s...");
             setTimeout(fetchIPRNTrunk, 10000);
         }
-    } catch (err) {
-        setTimeout(fetchIPRNTrunk, 10000);
-    }
+    } catch (err) { setTimeout(fetchIPRNTrunk, 10000); }
 };
 
 const globalSdeMap = new Map();
@@ -81,26 +68,15 @@ const globalSdeMap = new Map();
 const fetchSdeList = async () => {
     try {
         const payload = { jsonrpc: "2.0", method: "sms.realtime:get_subdestination_list", params: {}, id: Date.now() };
-        const res = await fetch(IPRN_API_URL, {
-            method: "POST",
-            headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
+        const res = await fetch(IPRN_API_URL, { method: "POST", headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         const data = await res.json();
-        
         if (data?.result?.subdestination_list) {
-            data.result.subdestination_list.forEach(item => {
-                globalSdeMap.set(item.sde_key, item.name);
-            });
-            console.log(`✅ Official SDE Dictionary Loaded: ${globalSdeMap.size} destinations cached.`);
+            data.result.subdestination_list.forEach(item => { globalSdeMap.set(item.sde_key, item.name); });
         }
-    } catch (e) {
-        console.error("⚠️ Failed to load SDE list:", e.message);
-    }
+    } catch (e) {}
 };
 
 const apiAuthCache = new Map();
-const globalWorkerUserCache = new Map(); 
 const userOtpResponseCache = new Map(); 
 
 let cachedMaskingSettings = { keywords: [], expiry: 0 };
@@ -112,9 +88,7 @@ async function getMaskingKeywords() {
         const kw = settings?.hiddenKeywords || [];
         cachedMaskingSettings = { keywords: kw, expiry: Date.now() + 60000 }; 
         return kw;
-    } catch (e) {
-        return cachedMaskingSettings.keywords;
-    }
+    } catch (e) { return cachedMaskingSettings.keywords; }
 }
 
 const extractStrictOTP = (rawText) => {
@@ -123,9 +97,7 @@ const extractStrictOTP = (rawText) => {
     return match ? match[0].trim() : "00000";
 };
 
-const escapeRegExp = (string) => {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-};
+const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const applyMasking = (text, keywords) => {
     if (!text) return text;
@@ -134,9 +106,7 @@ const applyMasking = (text, keywords) => {
         const word = w.trim();
         if (word && word.length > 1) {
             const regex = new RegExp(escapeRegExp(word), 'gi');
-            masked = masked.replace(regex, (match) => {
-                return match.replace(/[^\s]/g, '*');
-            });
+            masked = masked.replace(regex, (match) => match.replace(/[^\s]/g, '*'));
         }
     });
     return masked;
@@ -144,16 +114,11 @@ const applyMasking = (text, keywords) => {
 
 setInterval(() => {
     const now = Date.now();
-    for (const [key, value] of apiAuthCache.entries()) {
-        if (now > value.expiry) apiAuthCache.delete(key);
-    }
-    for (const [key, value] of userOtpResponseCache.entries()) {
-        if (now > value.expiry) userOtpResponseCache.delete(key);
-    }
+    for (const [key, value] of apiAuthCache.entries()) { if (now > value.expiry) apiAuthCache.delete(key); }
+    for (const [key, value] of userOtpResponseCache.entries()) { if (now > value.expiry) userOtpResponseCache.delete(key); }
 }, 30000); 
 
-setInterval(() => { globalWorkerUserCache.clear(); }, 5 * 60 * 1000); 
-
+// 💥 PURE EXTERNAL API ROUTE (V1 LOGIC: ONLY API USERS) 💥
 fastify.route({
     method: ['GET', 'POST'], 
     url: '/v1/getnum',
@@ -165,42 +130,19 @@ fastify.route({
             const cleanKey = apiKey.trim();
             let user;
 
-            // 💥 ENTERPRISE FIX: Direct Data Handoff (No DB Query needed here) 💥
-            if (cleanKey === "ZENEX_INTERNAL_DASHBOARD_PASS") {
-                let dashEmail = request.headers['x-dashboard-user'];
-                if (Array.isArray(dashEmail)) dashEmail = dashEmail[0]; 
-                
-                if (!dashEmail) return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized Dashboard Request." });
-                
+            let cachedObj = apiAuthCache.get(cleanKey);
+            if (!cachedObj || Date.now() > cachedObj.expiry) {
+                const dbUser = await User.findOne({ apiKey: cleanKey }).lean();
+                if (!dbUser || !dbUser.isApiActive || dbUser.status !== "active") return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized API User" });
                 user = {
-                    email: dashEmail.trim(),
-                    fullName: request.headers['x-dashboard-name'] ? decodeURIComponent(request.headers['x-dashboard-name']) : dashEmail.split("@")[0],
-                    uid: request.headers['x-dashboard-uid'] ? decodeURIComponent(request.headers['x-dashboard-uid']) : "ZX-UNKNOWN",
-                    agentEmail: request.headers['x-dashboard-agent'] ? decodeURIComponent(request.headers['x-dashboard-agent']) : "admin"
+                    email: dbUser.email,
+                    fullName: dbUser.fullName || dbUser.email.split("@")[0],
+                    uid: dbUser.uid || dbUser.zxId || "ZX-API",
+                    agentEmail: (dbUser.agentEmail || dbUser.customAgentMail || "admin").toLowerCase()
                 };
+                apiAuthCache.set(cleanKey, { user, expiry: Date.now() + 60000 });
             } else {
-                // External API Users still query DB normally
-                let cachedObj = apiAuthCache.get(cleanKey);
-                if (!cachedObj || Date.now() > cachedObj.expiry) {
-                    const dbUser = await User.findOne({ apiKey: cleanKey }).lean();
-                    if (!dbUser || !dbUser.isApiActive || dbUser.status !== "active") return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized API User" });
-                    
-                    user = {
-                        email: dbUser.email,
-                        fullName: dbUser.fullName || dbUser.email.split("@")[0],
-                        uid: dbUser.uid || dbUser.zxId || "ZX-API",
-                        agentEmail: (dbUser.agentEmail || dbUser.customAgentMail || "admin").toLowerCase()
-                    };
-                    apiAuthCache.set(cleanKey, { user: dbUser, expiry: Date.now() + 60000 });
-                } else {
-                    const dbUser = cachedObj.user;
-                    user = {
-                        email: dbUser.email,
-                        fullName: dbUser.fullName || dbUser.email.split("@")[0],
-                        uid: dbUser.uid || dbUser.zxId || "ZX-API",
-                        agentEmail: (dbUser.agentEmail || dbUser.customAgentMail || "admin").toLowerCase()
-                    };
-                }
+                user = cachedObj.user;
             }
 
             const controller = new AbortController();
@@ -218,24 +160,8 @@ fastify.route({
 
             let response;
             try {
-                // 💥 1-STEP REALTIME ALLOCATION 💥
-                const payload = {
-                    jsonrpc: "2.0",
-                    method: "sms.realtime:allocate",
-                    params: { 
-                        senderid: "OTP", 
-                        prefix_list: [String(rawRange).toUpperCase().replace(/X/g, '')], 
-                        dont_check_access: true
-                    },
-                    id: Date.now()
-                };
-
-                response = await fetch(IPRN_API_URL, {
-                    method: "POST",
-                    headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
-                    body: JSON.stringify(payload),
-                    signal: controller.signal
-                });
+                const payload = { jsonrpc: "2.0", method: "sms.realtime:allocate", params: { senderid: "OTP", prefix_list: [String(rawRange).toUpperCase().replace(/X/g, '')], dont_check_access: true }, id: Date.now() };
+                response = await fetch(IPRN_API_URL, { method: "POST", headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: controller.signal });
             } catch (fetchError) {
                 clearTimeout(timeoutId);
                 return reply.status(504).send({ meta: { status: "error" }, message: "Provider is slow. Try again." });
@@ -247,71 +173,44 @@ fastify.route({
                 return reply.status(502).send({ meta: { status: "error" }, message: "Invalid upstream response" }); 
             }
 
-            // 💥 INSTANT NUMBER EXTRACTION 💥
             if (data.result && data.result.number && data.result.number.full) {
                 const trxId = data.result.message_id || "";
                 const fullNumStr = String(data.result.number.full || "");
                 const localNumStr = String(data.result.number.local_number || fullNumStr);
                 
-                // 💥 ADVANCED SDE PARSER 💥
                 let exactCountry = "Unknown";
                 let exactOperator = "Mobile"; 
-
                 if (data.result.sde_key && globalSdeMap.has(data.result.sde_key)) {
                     let rawName = globalSdeMap.get(data.result.sde_key);
                     rawName = rawName.replace(/\s*\([\d+X]+\)\s*$/g, '').trim();
                     const parts = rawName.split(' - ');
                     exactCountry = parts[0] ? parts[0].trim() : "Unknown";
-                    if (parts.length >= 3) {
-                        exactOperator = parts[2].trim(); 
-                    } else if (parts.length === 2) {
-                        exactOperator = parts[1].trim().toLowerCase() === "mobile" ? "Mobile" : parts[1].trim();
-                    }
+                    if (parts.length >= 3) { exactOperator = parts[2].trim(); } 
+                    else if (parts.length === 2) { exactOperator = parts[1].trim().toLowerCase() === "mobile" ? "Mobile" : parts[1].trim(); }
                 }
                 
                 clearTimeout(timeoutId);
-                const todayStr = getUTCDateString();
                 
-                // 💥 DB SAVE WITH PASSED HEADERS (100% Guaranteed to work!) 💥
                 let generatedOrderId = null;
                 try {
                     const newOrder = new Order({
-                        userEmail: user.email,
-                        userName: user.fullName,         
-                        userUid: user.uid,           
-                        agentEmail: user.agentEmail,      
-                        searchNumber: fullNumStr,
-                        requestedRange: rawRange, 
-                        trxId: String(trxId), 
-                        displayNumber: `+${fullNumStr}`,
-                        country: exactCountry,
-                        operator: exactOperator,
-                        status: "WAIT",
-                        fullMessage: "Waiting...",
-                        otp: "Waiting...", 
-                        trueService: "Unknown", 
-                        dateString: todayStr,
-                        expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+                        userEmail: user.email, userName: user.fullName, userUid: user.uid, agentEmail: user.agentEmail,      
+                        searchNumber: fullNumStr, requestedRange: rawRange, trxId: String(trxId), displayNumber: `+${fullNumStr}`,
+                        country: exactCountry, operator: exactOperator, status: "WAIT", fullMessage: "Waiting...", otp: "Waiting...", 
+                        trueService: "Unknown", dateString: getUTCDateString(), expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
                     });
                     const savedOrder = await newOrder.save();
                     generatedOrderId = savedOrder._id.toString(); 
                 } catch (dbErr) {
                     console.error("⚠️ Local DB Save Error:", dbErr.message);
                 }
-                
-                console.log(`🚀 [SUCCESS] Number: +${fullNumStr} | Country: ${exactCountry} | Operator: ${exactOperator}`);
 
                 return reply.status(200).send({
                     success: true,
                     meta: { status: "ok", code: 200 },
                     data: {
-                        copy: `+${fullNumStr}`,
-                        number: `+${fullNumStr}`,
-                        full_number: `+${fullNumStr}`,         
-                        national_number: localNumStr,          
-                        no_plus_number: fullNumStr,            
-                        country: exactCountry,
-                        operator: exactOperator
+                        copy: `+${fullNumStr}`, number: `+${fullNumStr}`, full_number: `+${fullNumStr}`,         
+                        national_number: localNumStr, no_plus_number: fullNumStr, country: exactCountry, operator: exactOperator
                     },
                     orderId: generatedOrderId,
                     message: "number allocated"
@@ -319,13 +218,8 @@ fastify.route({
             }
 
             clearTimeout(timeoutId);
-            console.error("⚠️ IPRN Rejection Log:", JSON.stringify(data));
-            return reply.status(400).send({ 
-                meta: { status: "error" }, 
-                message: data.error?.message || "Out of stock or Invalid Range" 
-            });
+            return reply.status(400).send({ meta: { status: "error" }, message: data.error?.message || "Out of stock or Invalid Range" });
         } catch (error) {
-            console.error("❌ [ERROR] Global Try-Catch:", error.message);
             return reply.status(500).send({ meta: { status: "error" }, message: "Server Error" });
         }
     }
@@ -338,30 +232,20 @@ fastify.get('/v1/numsuccess/info', async (request, reply) => {
         const cleanKey = apiKey.trim();
 
         const cachedOtpData = userOtpResponseCache.get(cleanKey);
-        if (cachedOtpData && Date.now() < cachedOtpData.expiry) {
-            return reply.status(200).send({ meta: { status: "success", code: 200 }, data: { otps: cachedOtpData.otps } });
-        }
+        if (cachedOtpData && Date.now() < cachedOtpData.expiry) return reply.status(200).send({ meta: { status: "success", code: 200 }, data: { otps: cachedOtpData.otps } });
 
         let cachedObj = apiAuthCache.get(cleanKey);
         let user;
-
         if (!cachedObj || Date.now() > cachedObj.expiry) {
             user = await User.findOne({ apiKey: cleanKey }).select("email isApiActive").lean();
             if (user) apiAuthCache.set(cleanKey, { user, expiry: Date.now() + 60000 });
-        } else {
-            user = cachedObj.user;
-        }
+        } else { user = cachedObj.user; }
 
         if (!user || !user.isApiActive) return reply.status(401).send({ meta: { status: "error" }, message: "Unauthorized" });
 
         const hiddenKeywords = await getMaskingKeywords();
         const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
-        
-        const recentOrders = await Order.find({
-            userEmail: user.email,
-            status: "DONE", 
-            updatedAt: { $gte: twentyMinutesAgo }
-        }).select("_id displayNumber searchNumber otp fullMessage country operator updatedAt createdAt status").sort({ updatedAt: -1 }).lean();
+        const recentOrders = await Order.find({ userEmail: user.email, status: "DONE", updatedAt: { $gte: twentyMinutesAgo } }).select("_id displayNumber searchNumber otp fullMessage country operator updatedAt createdAt status").sort({ updatedAt: -1 }).lean();
 
         let expandedOtps = [];
         recentOrders.forEach(order => {
@@ -373,24 +257,17 @@ fastify.get('/v1/numsuccess/info', async (request, reply) => {
 
             let rawMsg = order.fullMessage || order.otp || "";
             if (rawMsg.includes("_||_")) {
-                const msgsArray = rawMsg.split("_||_").map(m => m.trim()).filter(Boolean);
-                msgsArray.forEach((msg, idx) => {
-                    expandedOtps.push({ 
-                        nid: `${baseNid}_${idx}`, number: numberClean, otp: applyMasking(msg, hiddenKeywords), 
-                        country: order.country || "Unknown", operator: order.operator || "Any", created_at: formattedDate 
-                    });
+                rawMsg.split("_||_").map(m => m.trim()).filter(Boolean).forEach((msg, idx) => {
+                    expandedOtps.push({ nid: `${baseNid}_${idx}`, number: numberClean, otp: applyMasking(msg, hiddenKeywords), country: order.country || "Unknown", operator: order.operator || "Any", created_at: formattedDate });
                 });
             } else {
-                expandedOtps.push({ 
-                    nid: `${baseNid}_0`, number: numberClean, otp: applyMasking(rawMsg, hiddenKeywords), 
-                    country: order.country || "Unknown", operator: order.operator || "Any", created_at: formattedDate 
-                });
+                expandedOtps.push({ nid: `${baseNid}_0`, number: numberClean, otp: applyMasking(rawMsg, hiddenKeywords), country: order.country || "Unknown", operator: order.operator || "Any", created_at: formattedDate });
             }
         });
 
         const validOtps = expandedOtps.filter(o => o.otp && o.otp.trim() !== "" && !["waiting...", "pending", "null"].includes(o.otp.toLowerCase()));
         userOtpResponseCache.set(cleanKey, { otps: validOtps, expiry: Date.now() + 1500 });
-        
+
         return reply.status(200).send({ meta: { status: "success", code: 200 }, data: { otps: validOtps } });
     } catch (error) { return reply.status(500).send({ meta: { status: "error" } }); }
 });
@@ -398,50 +275,34 @@ fastify.get('/v1/numsuccess/info', async (request, reply) => {
 let cachedActiveData = null;
 let lastFetchTime = 0;
 const CACHE_DURATION = 60 * 1000; 
-
 fastify.get('/v1/active-ranges', async (request, reply) => {
     try {
-        if (cachedActiveData && (Date.now() - lastFetchTime < CACHE_DURATION)) {
-            return reply.send({ success: true, cached: true, data: cachedActiveData });
-        }
-
+        if (cachedActiveData && (Date.now() - lastFetchTime < CACHE_DURATION)) return reply.send({ success: true, cached: true, data: cachedActiveData });
         const hiddenKeywords = await getMaskingKeywords();
-
         const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
         const recentOrders = await Order.find({ status: { $in: ["DONE", "Success", "SUCCESS"] }, updatedAt: { $gte: oneHourAgo } }).select("fullMessage otp searchNumber number trueService").lean();
         const rangeMap = {};
-
         recentOrders.forEach((o) => {
             let msg = o.fullMessage || o.otp || "";
             const rawService = o.trueService || "Unknown";
             const maskedService = applyMasking(rawService, hiddenKeywords); 
-
-            let num = o.searchNumber || o.number || "";
-            num = String(num).replace("+", "");
-            
+            let num = String(o.searchNumber || o.number || "").replace("+", "");
             if (num.length >= 6) {
                 const rangeStr = num.substring(0, 6) + "XXX"; 
                 let tag = "General";
                 if (rawService.toLowerCase() === "facebook" || rawService.toLowerCase() === "meta") {
                     const match = msg.match(/\b\d{4,8}\b/);
-                    if (match) {
-                        if (match[0].length === 6 || match[0].length === 8) tag = "Fb Clone";
-                        else if (match[0].length === 5) tag = "New Fb";
-                    }
+                    if (match) { if (match[0].length === 6 || match[0].length === 8) tag = "Fb Clone"; else if (match[0].length === 5) tag = "New Fb"; }
                 }
-                
                 const maskedTag = applyMasking(tag, hiddenKeywords); 
-
                 const key = `${rangeStr}|${maskedService}|${maskedTag}`;
                 if (!rangeMap[key]) rangeMap[key] = { range: rangeStr, service: maskedService, tag: maskedTag, hits: 0 };
                 rangeMap[key].hits += 1;
             }
         });
-
         const formattedRanges = Object.values(rangeMap).sort((a, b) => b.hits - a.hits).slice(0, 10);
         cachedActiveData = { active_ranges: formattedRanges };
         lastFetchTime = Date.now();
-
         return reply.send({ success: true, cached: false, data: cachedActiveData });
     } catch (error) { return reply.status(500).send({ success: false, message: "Server Error" }); }
 });
@@ -450,28 +311,15 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     try {
         const apiKey = request.headers['mapikey'];
         if (!apiKey) return reply.status(401).send({ error: "Invalid API Key" });
-        const cleanKey = apiKey.trim();
-        
-        let cachedObj = apiAuthCache.get(cleanKey);
+        let cachedObj = apiAuthCache.get(apiKey.trim());
         let user;
-
-        if (!cachedObj || Date.now() > cachedObj.expiry) {
-            user = await User.findOne({ apiKey: cleanKey }).select("email").lean();
-        } else {
-            user = cachedObj.user;
-        }
-        
+        if (!cachedObj || Date.now() > cachedObj.expiry) { user = await User.findOne({ apiKey: apiKey.trim() }).select("email").lean(); } 
+        else { user = cachedObj.user; }
         if (!user) return reply.status(401).send({ error: "Invalid API Key" });
-
         const hiddenKeywords = await getMaskingKeywords();
-        const todayStr = getUTCDateString();
-        const orders = await Order.find({ userEmail: user.email, dateString: todayStr, status: "DONE" }).select("displayNumber otp fullMessage -_id").lean();
+        const orders = await Order.find({ userEmail: user.email, dateString: getUTCDateString(), status: "DONE" }).select("displayNumber otp fullMessage -_id").lean();
         if (orders.length === 0) return reply.type('text/plain').send("NO_DATA");
-        
-        const textData = orders.map((o) => {
-            return `${String(o.displayNumber).replace(/\D/g, "")}|${applyMasking(o.fullMessage || o.otp || "", hiddenKeywords)}`;
-        }).join('\n');
-        
+        const textData = orders.map((o) => `${String(o.displayNumber).replace(/\D/g, "")}|${applyMasking(o.fullMessage || o.otp || "", hiddenKeywords)}`).join('\n');
         return reply.type('text/plain').send(textData);
     } catch (error) { return reply.status(500).send({ error: "Server Error" }); }
 });
@@ -480,47 +328,22 @@ const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
     if (!text) return;
     const query = trunkTxId ? { trxId: String(trunkTxId) } : { searchNumber: String(destNum).replace('+', '') };
     const existingOrders = await Order.find(query).sort({ _id: 1 });
-    
     if (existingOrders.length > 0) {
         const baseOrder = existingOrders[0];
         const orderAgeInMs = Date.now() - new Date(baseOrder.createdAt).getTime();
-        const maxAllowedTime = 25 * 60 * 1000; 
-        if (orderAgeInMs > maxAllowedTime || baseOrder.status === "FAIL" || baseOrder.status === "CANCEL") return; 
-
+        if (orderAgeInMs > 25 * 60 * 1000 || baseOrder.status === "FAIL" || baseOrder.status === "CANCEL") return; 
         const strictOtp = extractStrictOTP(text);
-        const isDuplicate = existingOrders.some(o => 
-            o.fullMessage === text || 
-            (o.fullMessage && o.fullMessage.includes(text)) || 
-            o.otp === strictOtp
-        );
-        
+        const isDuplicate = existingOrders.some(o => o.fullMessage === text || (o.fullMessage && o.fullMessage.includes(text)) || o.otp === strictOtp);
         if (!isDuplicate) {
             if (baseOrder.status === "WAIT") {
-                baseOrder.status = "DONE";
-                baseOrder.otp = strictOtp;
-                baseOrder.fullMessage = text;
-                baseOrder.trueService = senderId || "Unknown";
+                baseOrder.status = "DONE"; baseOrder.otp = strictOtp; baseOrder.fullMessage = text; baseOrder.trueService = senderId || "Unknown";
                 await baseOrder.save();
             } else {
                 const newMultiOrder = new Order({
-                    userEmail: baseOrder.userEmail,
-                    userName: baseOrder.userName,
-                    userUid: baseOrder.userUid,
-                    agentEmail: baseOrder.agentEmail,
-                    searchNumber: baseOrder.searchNumber,
-                    displayNumber: baseOrder.displayNumber,
-                    country: baseOrder.country,
-                    operator: baseOrder.operator,
-                    dateString: baseOrder.dateString,
-                    orderCost: baseOrder.orderCost,
-                    orderCommission: baseOrder.orderCommission,
-                    requestedRange: baseOrder.requestedRange,
-                    trxId: baseOrder.trxId,
-                    status: "DONE",
-                    otp: strictOtp,
-                    fullMessage: text,
-                    trueService: senderId || "Unknown",
-                    expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+                    userEmail: baseOrder.userEmail, userName: baseOrder.userName, userUid: baseOrder.userUid, agentEmail: baseOrder.agentEmail,
+                    searchNumber: baseOrder.searchNumber, displayNumber: baseOrder.displayNumber, country: baseOrder.country, operator: baseOrder.operator,
+                    dateString: baseOrder.dateString, orderCost: baseOrder.orderCost, orderCommission: baseOrder.orderCommission, requestedRange: baseOrder.requestedRange,
+                    trxId: baseOrder.trxId, status: "DONE", otp: strictOtp, fullMessage: text, trueService: senderId || "Unknown", expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
                 });
                 await newMultiOrder.save();
             }
@@ -532,27 +355,16 @@ fastify.post('/v1/webhook/iprn-receive', async (request, reply) => {
     try {
         const allowedIPs = ['51.38.107.49', '127.0.0.1']; 
         const clientIP = request.ip;
-        
-        if (!allowedIPs.includes(clientIP)) {
-            console.warn(`🚨 Security Breach Blocked: Unauthorized Webhook attempt from IP: ${clientIP}`);
-            return reply.status(403).send({ success: false, message: "Unauthorized IP. ZENEX Security Firewall Active." });
-        }
-
+        if (!allowedIPs.includes(clientIP)) return reply.status(403).send({ success: false, message: "Unauthorized IP. ZENEX Security Firewall Active." });
         const data = request.body || {};
         const trunkTxId = data.message_id || data.trunk_number_transaction_id || data.trxId;
         const text = data.text || data.message || data.content;
         const senderId = data.senderid || data.source_addr || "Unknown";
         const destNum = data.destination_addr || data.number;
-
         if (!text) return reply.status(400).send({ success: false, message: "No text found in payload" });
-
         await processIncomingOTP(trunkTxId, text, senderId, destNum);
-
         return reply.status(200).send({ success: true, message: "Webhook received and processed" });
-    } catch (error) {
-        console.error("❌ Webhook Processing Error:", error.message);
-        return reply.status(500).send({ success: false, message: "Internal Server Error" });
-    }
+    } catch (error) { return reply.status(500).send({ success: false, message: "Internal Server Error" }); }
 });
 
 let isPolling = false;
@@ -560,40 +372,21 @@ const pollIncomingOTPs = async () => {
     if (!IPRN_SMS_TRUNK_ID || isPolling) return;
     isPolling = true;
     try {
-        const payload = {
-            jsonrpc: "2.0",
-            method: "sms.mdr_full:get_list",
-            params: { target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID }, limit: 40 },
-            id: Date.now()
-        };
-        
-        const res = await fetch(IPRN_API_URL, {
-            method: "POST",
-            headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
+        const res = await fetch(IPRN_API_URL, { method: "POST", headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", method: "sms.mdr_full:get_list", params: { target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID }, limit: 40 }, id: Date.now() }) });
         const data = await res.json();
-        
         if (data && data.result && Array.isArray(data.result.mdr_list)) {
             for (const msg of data.result.mdr_list) {
-                const trunkTxId = msg.message_id || msg.trunk_number_transaction_id;
-                const text = msg.text || msg.message || "";
-                const senderId = msg.senderid || msg.source_addr || "Unknown";
-                const destNum = msg.destination_addr || msg.number || "";
-                
-                await processIncomingOTP(trunkTxId, text, senderId, destNum);
+                await processIncomingOTP(msg.message_id || msg.trunk_number_transaction_id, msg.text || msg.message || "", msg.senderid || msg.source_addr || "Unknown", msg.destination_addr || msg.number || "");
             }
         }
     } catch (err) {} finally { isPolling = false; }
 };
-
 setInterval(pollIncomingOTPs, 5000);
 
 const startServer = async () => {
     try {
         await connectDB();
-        await fetchIPRNTrunk(); 
-        await fetchSdeList(); 
+        await fetchIPRNTrunk(); await fetchSdeList(); 
         await fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' });
         console.log(`⚡ ZENEX Microservice V2 is LIVE at: http://localhost:${process.env.PORT || 5000}`);
     } catch (err) { process.exit(1); }
