@@ -15,7 +15,7 @@ const redis = new Redis();
 fastify.register(fastifyCors, { 
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'mapikey', 'x-dashboard-user']
+    allowedHeaders: ['Content-Type', 'mapikey', 'x-dashboard-user', 'User-Agent']
 });
 
 fastify.register(fastifyFormbody); 
@@ -186,13 +186,14 @@ fastify.route({
             const cleanKey = apiKey.trim();
             let user;
 
+            // 💥 BOSS INSTRUCTION STRICT FIX: Absolute Data Integrity Check 💥
             if (cleanKey === "ZENEX_INTERNAL_DASHBOARD_PASS") {
                 const dashEmail = request.headers['x-dashboard-user'];
-                if (!dashEmail) return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized Dashboard Request" });
+                if (!dashEmail) return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized Dashboard Request. Headers Stripped." });
                 
-                // 💥 ENTERPRISE FIX: Fetch full user to satisfy MongoDB Schema constraints
+                // No Fallbacks. Must find exact user in DB.
                 user = await User.findOne({ email: dashEmail }).lean();
-                if (!user) return reply.status(403).send({ meta: { status: "error" }, message: "User not found in Database" });
+                if (!user) return reply.status(403).send({ meta: { status: "error" }, message: "Critical: User Data Missing in Database. Aborting transaction." });
             } else {
                 let cachedObj = apiAuthCache.get(cleanKey);
                 if (!cachedObj || Date.now() > cachedObj.expiry) {
@@ -260,15 +261,9 @@ fastify.route({
 
                 if (data.result.sde_key && globalSdeMap.has(data.result.sde_key)) {
                     let rawName = globalSdeMap.get(data.result.sde_key);
-                    
-                    // 1. Remove ANY trailing bracketed range like "(7940XXXXXXX)"
                     rawName = rawName.replace(/\s*\([\d+X]+\)\s*$/g, '').trim();
-
-                    // 2. Split by ' - '
                     const parts = rawName.split(' - ');
                     exactCountry = parts[0] ? parts[0].trim() : "Unknown";
-                    
-                    // 3. Extract Operator dynamically
                     if (parts.length >= 3) {
                         exactOperator = parts[2].trim(); 
                     } else if (parts.length === 2) {
@@ -279,7 +274,7 @@ fastify.route({
                 clearTimeout(timeoutId);
                 const todayStr = getUTCDateString();
                 
-                // 💥 ENTERPRISE FIX: SECURE DB SAVE CONFORMING TO STRICT SCHEMA 💥
+                // 💥 DB SAVE WITH 100% SECURE VERIFIED SCHEMA 💥
                 let generatedOrderId = null;
                 try {
                     const matchedName = user.fullName || user.email.split("@")[0];
@@ -312,7 +307,6 @@ fastify.route({
                 
                 console.log(`🚀 [SUCCESS] Number: +${fullNumStr} | Country: ${exactCountry} | Operator: ${exactOperator}`);
 
-                // 💥 LEGACY COMPATIBLE JSON PAYLOAD 💥
                 return reply.status(200).send({
                     success: true,
                     meta: { status: "ok", code: 200 },
@@ -488,10 +482,6 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     } catch (error) { return reply.status(500).send({ error: "Server Error" }); }
 });
 
-
-// ==========================================
-// 💥 SHARED LOGIC: DUAL-ENGINE OTP PROCESSOR (STRICT 20-MIN RULE) 💥
-// ==========================================
 const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
     if (!text) return;
     const query = trunkTxId ? { trxId: String(trunkTxId) } : { searchNumber: String(destNum).replace('+', '') };
@@ -499,16 +489,11 @@ const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
     
     if (existingOrders.length > 0) {
         const baseOrder = existingOrders[0];
-
-        // 💥 THE BOSS RULE: 25 Minutes Maximum Hard Limit 💥
         const orderAgeInMs = Date.now() - new Date(baseOrder.createdAt).getTime();
-        const maxAllowedTime = 25 * 60 * 1000; // 25 Minutes Backup Time
-        if (orderAgeInMs > maxAllowedTime || baseOrder.status === "FAIL" || baseOrder.status === "CANCEL") {
-            return; 
-        }
+        const maxAllowedTime = 25 * 60 * 1000; 
+        if (orderAgeInMs > maxAllowedTime || baseOrder.status === "FAIL" || baseOrder.status === "CANCEL") return; 
 
         const strictOtp = extractStrictOTP(text);
-        
         const isDuplicate = existingOrders.some(o => 
             o.fullMessage === text || 
             (o.fullMessage && o.fullMessage.includes(text)) || 
@@ -549,12 +534,8 @@ const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
     }
 };
 
-// ==========================================
-// 💥 ENGINE 1: THE FUTURE WEBHOOK (PUSH) + IP FIREWALL 💥
-// ==========================================
 fastify.post('/v1/webhook/iprn-receive', async (request, reply) => {
     try {
-        // 💥 SECURE IP FIREWALL 💥
         const allowedIPs = ['51.38.107.49', '127.0.0.1']; 
         const clientIP = request.ip;
         
@@ -564,15 +545,12 @@ fastify.post('/v1/webhook/iprn-receive', async (request, reply) => {
         }
 
         const data = request.body || {};
-        
         const trunkTxId = data.message_id || data.trunk_number_transaction_id || data.trxId;
         const text = data.text || data.message || data.content;
         const senderId = data.senderid || data.source_addr || "Unknown";
         const destNum = data.destination_addr || data.number;
 
-        if (!text) {
-            return reply.status(400).send({ success: false, message: "No text found in payload" });
-        }
+        if (!text) return reply.status(400).send({ success: false, message: "No text found in payload" });
 
         await processIncomingOTP(trunkTxId, text, senderId, destNum);
 
@@ -583,9 +561,6 @@ fastify.post('/v1/webhook/iprn-receive', async (request, reply) => {
     }
 });
 
-// ==========================================
-// 💥 ENGINE 2: THE TEMPORARY POLLER (PULL) 💥
-// ==========================================
 let isPolling = false;
 const pollIncomingOTPs = async () => {
     if (!IPRN_SMS_TRUNK_ID || isPolling) return;
@@ -594,10 +569,7 @@ const pollIncomingOTPs = async () => {
         const payload = {
             jsonrpc: "2.0",
             method: "sms.mdr_full:get_list",
-            params: { 
-                target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID },
-                limit: 40 
-            },
+            params: { target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID }, limit: 40 },
             id: Date.now()
         };
         
@@ -606,7 +578,6 @@ const pollIncomingOTPs = async () => {
             headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         });
-        
         const data = await res.json();
         
         if (data && data.result && Array.isArray(data.result.mdr_list)) {
@@ -619,11 +590,7 @@ const pollIncomingOTPs = async () => {
                 await processIncomingOTP(trunkTxId, text, senderId, destNum);
             }
         }
-    } catch (err) {
-        // Poller errors silently suppressed to keep the event loop clean
-    } finally {
-        isPolling = false;
-    }
+    } catch (err) {} finally { isPolling = false; }
 };
 
 setInterval(pollIncomingOTPs, 5000);
