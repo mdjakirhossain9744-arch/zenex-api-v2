@@ -175,8 +175,6 @@ fastify.route({
                 }
             }
 
-            if (!IPRN_SMS_TRUNK_ID) return reply.status(503).send({ meta: { status: "error" }, message: "System Initializing. Please wait." });
-
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 12000); 
             request.raw.on('close', () => { if (request.raw.aborted) controller.abort(); });
@@ -192,15 +190,14 @@ fastify.route({
 
             let response;
             try {
-                // 💥 STEP 1: ALLOCATION 💥
+                // 💥 1-STEP REALTIME ALLOCATION 💥
                 const payload = {
                     jsonrpc: "2.0",
-                    method: "sms.allocation:template_by_account_user",
+                    method: "sms.realtime:allocate",
                     params: { 
-                        target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID },
-                        template: String(rawRange).toUpperCase(),
-                        numbers: 1,
-                        random_number: true
+                        senderid: "OTP", 
+                        prefix_list: [String(rawRange).toUpperCase().replace(/X/g, '')], 
+                        dont_check_access: true
                     },
                     id: Date.now()
                 };
@@ -222,117 +219,48 @@ fastify.route({
                 return reply.status(502).send({ meta: { status: "error" }, message: "Invalid upstream response" }); 
             }
 
-            // 💥 STEP 2: FETCH ACTUAL NUMBER 💥
-            if (data.result && data.result.trunk_number_transaction && data.result.trunk_number_transaction.id) {
-                const trxId = data.result.trunk_number_transaction.id;
-                console.log(`✅ [SUCCESS] Number Allocated! Transaction ID: ${trxId}`);
+            // 💥 INSTANT NUMBER EXTRACTION (ZERO SECONDARY CALLS) 💥
+            if (data.result && data.result.number && data.result.number.full) {
+                const fullNum = data.result.number.full;
+                const trxId = data.result.message_id || "";
+                const country = data.result.number.country_code || "Unknown";
                 
-                try {
-                    // Fetch with Transaction ID
-                    const fetchNumPayload = {
-                        jsonrpc: "2.0",
-                        method: "sms.trunk_number:get_list",
-                        params: { 
-                            target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID },
-                            trunk_number_transaction_id: trxId 
-                        },
-                        id: Date.now()
-                    };
-
-                    const numRes = await fetch(IPRN_API_URL, {
-                        method: "POST",
-                        headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
-                        body: JSON.stringify(fetchNumPayload),
-                        signal: controller.signal
+                clearTimeout(timeoutId);
+                const todayStr = getUTCDateString();
+                
+                setImmediate(() => {
+                    const newOrder = new Order({
+                        userEmail: user.email,
+                        searchNumber: fullNum,
+                        requestedRange: rawRange, 
+                        trxId: String(trxId), 
+                        displayNumber: `+${fullNum}`,
+                        country: country,
+                        operator: "Any",
+                        status: "WAIT",
+                        fullMessage: "Waiting...",
+                        otp: "Waiting...", 
+                        trueService: "Unknown", 
+                        dateString: todayStr,
+                        expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
                     });
-                    
-                    const numData = await numRes.json();
-                    let trunkObj = null;
+                    newOrder.save().catch(() => {});
+                });
+                
+                console.log(`🚀 [SUCCESS] Instant Number Allocated: +${fullNum} | MSG ID: ${trxId}`);
 
-                    if (numData.result && Array.isArray(numData.result.trunk_number_list)) {
-                        // 💥 BOSS FIX: Ignore Region Headers, find the actual object with a 'number' property
-                        trunkObj = numData.result.trunk_number_list.find(t => t.number || t.full_number || (t.number && t.number.full));
+                return reply.status(200).send({
+                    meta: { status: "success", code: 200 },
+                    data: {
+                        copy: `+${fullNum}`,
+                        number: `+${fullNum}`,
+                        full_number: fullNum,
+                        country: country,
+                        iso: "Unknown",
+                        operator: "Any",
+                        status: "pending"
                     }
-
-                    // If primary fetch fails or returns empty/invalid, use fallback
-                    if (!trunkObj) {
-                        console.log(`⚠️ [WARN] Step 2 didn't find specific transaction number. Trying Fallback...`);
-                        
-                        const fallbackPayload = {
-                            jsonrpc: "2.0",
-                            method: "sms.trunk_number:get_list",
-                            params: { 
-                                target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID }
-                            },
-                            id: Date.now()
-                        };
-                        const fallRes = await fetch(IPRN_API_URL, { method: "POST", headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify(fallbackPayload) });
-                        const fallData = await fallRes.json();
-                        
-                        if (fallData.result && Array.isArray(fallData.result.trunk_number_list)) {
-                            // 💥 BOSS FIX: Filter out Header objects, keep only valid number objects
-                            const validNumbers = fallData.result.trunk_number_list.filter(t => t.number || t.full_number || (t.number && t.number.full));
-                            
-                            if (validNumbers.length > 0) {
-                                // Sort by modified_at descending to grab the very latest allocated number
-                                validNumbers.sort((a, b) => new Date(b.modified_at || 0) - new Date(a.modified_at || 0));
-                                trunkObj = validNumbers[0];
-                            }
-                        }
-                    }
-
-                    clearTimeout(timeoutId);
-
-                    let assignedNumber = trunkObj?.number || trunkObj?.full_number || trunkObj?.number?.full || null;
-
-                    if (assignedNumber) {
-                        const todayStr = getUTCDateString();
-                        const providerNumber = String(assignedNumber); 
-                        const fullNum = providerNumber.includes('+') ? providerNumber.replace('+', '') : providerNumber;
-                        const country = trunkObj.country_name || trunkObj.country_code || "Unknown";
-                        
-                        setImmediate(() => {
-                            const newOrder = new Order({
-                                userEmail: user.email,
-                                searchNumber: fullNum,
-                                requestedRange: rawRange, 
-                                trxId: String(trxId), 
-                                displayNumber: `+${fullNum}`,
-                                country: country,
-                                operator: "Any",
-                                status: "WAIT",
-                                fullMessage: "Waiting...",
-                                otp: "Waiting...", 
-                                trueService: "Unknown", 
-                                dateString: todayStr,
-                                expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
-                            });
-                            newOrder.save().catch(() => {});
-                        });
-                        
-                        console.log(`🚀 [SUCCESS] Final Number Extracted: +${fullNum}`);
-
-                        return reply.status(200).send({
-                            meta: { status: "success", code: 200 },
-                            data: {
-                                copy: `+${fullNum}`,
-                                number: `+${fullNum}`,
-                                full_number: fullNum,
-                                country: country,
-                                iso: "Unknown",
-                                operator: "Any",
-                                status: "pending"
-                            }
-                        });
-                    } else {
-                        console.error("❌ [ERROR] Number object missing in lists.");
-                        return reply.status(500).send({ meta: { status: "error" }, message: "Number assigned but retrieval failed." });
-                    }
-                } catch (numErr) {
-                    clearTimeout(timeoutId);
-                    console.error("❌ [ERROR] Exception in Step 2:", numErr.message);
-                    return reply.status(500).send({ meta: { status: "error" }, message: "Failed to retrieve allocated number details." });
-                }
+                });
             }
 
             clearTimeout(timeoutId);
@@ -570,7 +498,8 @@ fastify.post('/v1/webhook/iprn-receive', async (request, reply) => {
 
         const data = request.body || {};
         
-        const trunkTxId = data.trunk_number_transaction_id || data.trxId;
+        // Match message_id to trxId for 1-Step allocation
+        const trunkTxId = data.message_id || data.trunk_number_transaction_id || data.trxId;
         const text = data.text || data.message || data.content;
         const senderId = data.senderid || data.source_addr || "Unknown";
         const destNum = data.destination_addr || data.number;
@@ -616,7 +545,8 @@ const pollIncomingOTPs = async () => {
         
         if (data && data.result && Array.isArray(data.result.mdr_list)) {
             for (const msg of data.result.mdr_list) {
-                const trunkTxId = msg.trunk_number_transaction_id;
+                // Support both legacy trunk TxId and realtime message_id
+                const trunkTxId = msg.message_id || msg.trunk_number_transaction_id;
                 const text = msg.text || msg.message || "";
                 const senderId = msg.senderid || msg.source_addr || "Unknown";
                 const destNum = msg.destination_addr || msg.number || "";
