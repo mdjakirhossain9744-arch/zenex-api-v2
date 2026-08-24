@@ -247,28 +247,31 @@ fastify.route({
 
             // 💥 INSTANT NUMBER EXTRACTION 💥
             if (data.result && data.result.number && data.result.number.full) {
-                const fullNum = data.result.number.full;
                 const trxId = data.result.message_id || "";
-                const countryCode = data.result.number.country_code || "Unknown";
+                const fullNumStr = String(data.result.number.full || "");
+                const localNumStr = String(data.result.number.local_number || fullNumStr);
                 
-                // 💥 SDE TRANSLATION LOGIC 💥
+                // 💥 ADVANCED SDE PARSER 💥
                 let exactCountry = "Unknown";
-                let exactOperator = "Any";
+                let exactOperator = "Mobile"; 
 
-                if (data.result.sde_key) {
-                    const rawName = globalSdeMap.get(data.result.sde_key) || "Unknown - Any";
+                if (data.result.sde_key && globalSdeMap.has(data.result.sde_key)) {
+                    let rawName = globalSdeMap.get(data.result.sde_key);
+                    
+                    // 1. Remove ANY trailing bracketed range like "(7940XXXXXXX)"
+                    rawName = rawName.replace(/\s*\([\d+X]+\)\s*$/g, '').trim();
+
+                    // 2. Split by ' - '
                     const parts = rawName.split(' - ');
                     exactCountry = parts[0] ? parts[0].trim() : "Unknown";
                     
+                    // 3. Extract Operator dynamically
                     if (parts.length >= 3) {
-                        exactOperator = parts[2].trim().replace(/\s*\d+XXX/g, ''); 
-                    } else if (parts.length === 2 && !parts[1].toLowerCase().includes('mobile')) {
-                        exactOperator = parts[1].trim();
+                        exactOperator = parts[2].trim(); 
+                    } else if (parts.length === 2) {
+                        exactOperator = parts[1].trim().toLowerCase() === "mobile" ? "Mobile" : parts[1].trim();
                     }
                 }
-
-                const localNum = fullNum.startsWith(countryCode) ? fullNum.slice(countryCode.length) : fullNum;
-                const isoCode = "Unknown";
                 
                 clearTimeout(timeoutId);
                 const todayStr = getUTCDateString();
@@ -278,10 +281,10 @@ fastify.route({
                 try {
                     const newOrder = new Order({
                         userEmail: user.email,
-                        searchNumber: fullNum,
+                        searchNumber: fullNumStr,
                         requestedRange: rawRange, 
                         trxId: String(trxId), 
-                        displayNumber: `+${fullNum}`,
+                        displayNumber: `+${fullNumStr}`,
                         country: exactCountry,
                         operator: exactOperator,
                         status: "WAIT",
@@ -297,23 +300,23 @@ fastify.route({
                     console.error("⚠️ Local DB Save Error:", dbErr.message);
                 }
                 
-                console.log(`🚀 [SUCCESS] Number: +${fullNum} | Country: ${exactCountry} | Operator: ${exactOperator}`);
+                console.log(`🚀 [SUCCESS] Number: +${fullNumStr} | Country: ${exactCountry} | Operator: ${exactOperator}`);
 
-                // 💥 STRICT FRONTEND-COMPATIBLE RESPONSE 💥
+                // 💥 LEGACY COMPATIBLE JSON PAYLOAD 💥
                 return reply.status(200).send({
-                    meta: { status: "success", code: 200 },
+                    success: true,
+                    meta: { status: "ok", code: 200 },
                     data: {
-                        copy: `+${fullNum}`,
-                        number: `+${fullNum}`,
-                        full_number: fullNum,
-                        national_number: localNum.startsWith('0') ? localNum : `0${localNum}`,
+                        copy: `+${fullNumStr}`,
+                        number: `+${fullNumStr}`,
+                        full_number: `+${fullNumStr}`,         
+                        national_number: localNumStr,          
+                        no_plus_number: fullNumStr,            
                         country: exactCountry,
-                        iso: isoCode,
-                        operator: exactOperator,
-                        status: "pending"
+                        operator: exactOperator
                     },
-                    orderId: generatedOrderId, 
-                    message: "Virtual number provisioned successfully"
+                    orderId: generatedOrderId,
+                    message: "number allocated"
                 });
             }
 
@@ -619,7 +622,7 @@ const startServer = async () => {
     try {
         await connectDB();
         await fetchIPRNTrunk(); 
-        await fetchSdeList(); // 💥 SDE CACHE LOAD ON STARTUP 💥
+        await fetchSdeList(); 
         await fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' });
         console.log(`⚡ ZENEX Microservice V2 is LIVE at: http://localhost:${process.env.PORT || 5000}`);
     } catch (err) { process.exit(1); }
