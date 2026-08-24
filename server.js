@@ -149,73 +149,6 @@ async function triggerBinanceAutoPay(user) {
     } catch (e) {}
 }
 
-const extractServiceName = (msg) => {
-    if (!msg) return "Other";
-    const text = msg.toLowerCase();
-
-    if (text.includes('facebook') || text.includes(' fb ') || text.includes('facebk') || text.includes('fb.me') || text.includes('h29q+fsn4sr') || text.includes('laz+nxcarlw') || text.includes('فيسبوك') || text.includes('फेसबुक') || text.includes('ফেসবুক') || text.includes('脸书') || text.includes('ፌስቡክ') || text.includes('ფეისბუქი')) return 'Facebook';
-    if (text.includes('whatsapp') || text.includes(' wa ') || text.includes('vwaq') || text.includes('wa.me') || text.includes('واتساب') || text.includes('वाट्सएप') || text.includes('হোয়াটসঅ্যাপ') || text.includes('వాట్సాప్') || text.includes('왓츠앱')) return 'WhatsApp';
-    if (text.includes('telegram') || text.includes('t.me') || text.includes('تيليجرام') || text.includes('टेलीग्राम') || text.includes('টেলিগ্রাম') || text.includes('телеграм') || text.includes('电报') || text.includes('ቴሌግራም')) return 'Telegram';
-    if (text.includes('instagram') || text.includes(' ig ') || text.includes('ig.me') || text.includes('انستجرام') || text.includes('इंस्टाग्राम') || text.includes('ইন্সটাগ্রাম') || text.includes('인스타그램')) return 'Instagram';
-    if (text.includes('google') || /g-\d+/.test(text) || text.includes('gmail') || text.includes('youtube') || text.includes('g.co') || text.includes('جوجل') || text.includes('गूगल') || text.includes('গুগল') || text.includes('谷歌') || text.includes('구글') || text.includes('гугл')) return 'Google';
-    
-    if (text.includes('w5eue21qadh') || text.includes('imo') || text.includes('ايمو') || text.includes('ইমো')) return 'IMO';
-    if (text.includes('ftptmjpdh') || text.includes('viber') || text.includes('فايبر') || text.includes('ভাইবার')) return 'Viber';
-    
-    if (text.includes('meta')) return 'Meta';
-    if (text.includes('lalamove')) return 'Lalamove'; 
-    if (text.includes('tiktok') || text.includes(' tt ') || text.includes('تيك توك') || text.includes('टिकटॉक') || text.includes('টিকটক') || text.includes('틱톡')) return 'TikTok';
-    if (text.includes('snapchat')) return 'Snapchat';
-    if (text.includes('twitter') || text.includes(' x ') || text.includes('for x')) return 'X';
-    if (text.includes('apple') || text.includes('icloud')) return 'Apple';
-    if (text.includes('microsoft') || text.includes('live') || text.includes('outlook')) return 'Microsoft';
-    if (text.includes('amazon') || text.includes('prime')) return 'Amazon';
-    if (text.includes('netflix')) return 'Netflix';
-    if (text.includes('uber') && !text.includes('airbnb')) return 'Uber';
-    if (text.includes('paypal') || text.includes('pay pal')) return 'PayPal';
-    if (text.includes('cashapp') || text.includes('cash app')) return 'CashApp';
-    if (text.includes('venmo')) return 'Venmo';
-    if (text.includes('tinder')) return 'Tinder';
-    if (text.includes('bumble')) return 'Bumble';
-    if (text.includes('discord')) return 'Discord';
-    if (text.includes('twitch')) return 'Twitch';
-    if (text.includes('yahoo')) return 'Yahoo';
-    if (text.includes('wechat')) return 'WeChat';
-    if (text.includes('line')) return 'Line';
-    if (text.includes('kakaotalk')) return 'KakaoTalk';
-    if (text.includes('airbnb')) return 'Uber/Airbnb'; 
-    if (text.includes('binance') || text.includes('بینانس') || text.includes('बाइनेंस') || text.includes('বাইনান্স')) return 'Binance';
-    if (text.includes('coinbase')) return 'Coinbase';
-    if (text.includes('kucoin') && !text.includes('kraken')) return 'KuCoin';
-    if (text.includes('kraken')) return 'KuCoin/Kraken';
-    if (text.includes('epic games')) return 'Epic Games';
-    if (text.includes('steam')) return 'Steam';
-    if (text.includes('riot')) return 'Riot Games';
-    if (text.includes('daraz')) return 'Daraz';
-    if (text.includes('pathao')) return 'Pathao';
-    if (text.includes('foodpanda')) return 'Foodpanda';
-
-    const bracketMatch = msg.match(/(?:<|\[|【|\x1B<)\s*([A-Za-z0-9.\- ]{2,20})\s*(?:>|\]|】|\x1B>)/);
-    if (bracketMatch && bracketMatch[1]) {
-        const extracted = bracketMatch[1].trim();
-        const ignored = ["#", "code", "reply", "sms", "otp", "msg", "verification"];
-        if (!ignored.includes(extracted.toLowerCase())) {
-            return extracted.charAt(0).toUpperCase() + extracted.slice(1);
-        }
-    }
-
-    const opMatch = msg.match(/(?:operating on|code for|from)\s+([A-Za-z0-9.\-]{2,20})\b/i);
-    if (opMatch && opMatch[1]) {
-        const ext = opMatch[1].trim();
-        const ignored = ["the", "a", "an", "your", "this"];
-        if (!ignored.includes(ext.toLowerCase())) {
-            return ext.charAt(0).toUpperCase() + ext.slice(1);
-        }
-    }
-
-    return "Other"; 
-};
-
 fastify.route({
     method: ['GET', 'POST'], 
     url: '/v1/getnum',
@@ -295,14 +228,13 @@ fastify.route({
                 console.log(`✅ [SUCCESS] Number Allocated! Transaction ID: ${trxId}`);
                 
                 try {
-                    // BOSS FIX: Provider requires "target" wrapper for get_list method!
+                    // Fetch with Transaction ID
                     const fetchNumPayload = {
                         jsonrpc: "2.0",
                         method: "sms.trunk_number:get_list",
                         params: { 
-                            target: {
-                                trunk_number_transaction_id: trxId 
-                            }
+                            target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID },
+                            trunk_number_transaction_id: trxId 
                         },
                         id: Date.now()
                     };
@@ -315,32 +247,37 @@ fastify.route({
                     });
                     
                     const numData = await numRes.json();
-                    console.log(`🔍 [DEBUG] Step 2 Fetch Response:`, JSON.stringify(numData));
-                    
                     let trunkObj = null;
 
-                    if (numData.result && numData.result.trunk_number_list && numData.result.trunk_number_list.length > 0) {
-                        trunkObj = numData.result.trunk_number_list[0];
-                    } else {
-                        console.log(`⚠️ [WARN] Step 2 empty list. Trying Fallback...`);
-                        // BOSS FIX: Fallback payload also needs "target" wrapper
+                    if (numData.result && Array.isArray(numData.result.trunk_number_list)) {
+                        // 💥 BOSS FIX: Ignore Region Headers, find the actual object with a 'number' property
+                        trunkObj = numData.result.trunk_number_list.find(t => t.number || t.full_number || (t.number && t.number.full));
+                    }
+
+                    // If primary fetch fails or returns empty/invalid, use fallback
+                    if (!trunkObj) {
+                        console.log(`⚠️ [WARN] Step 2 didn't find specific transaction number. Trying Fallback...`);
+                        
                         const fallbackPayload = {
                             jsonrpc: "2.0",
                             method: "sms.trunk_number:get_list",
                             params: { 
-                                target: {
-                                    "sms.trunk_id": IPRN_SMS_TRUNK_ID 
-                                },
-                                limit: 1
+                                target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID }
                             },
                             id: Date.now()
                         };
                         const fallRes = await fetch(IPRN_API_URL, { method: "POST", headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify(fallbackPayload) });
                         const fallData = await fallRes.json();
-                        console.log(`🔍 [DEBUG] Fallback Response:`, JSON.stringify(fallData));
                         
-                        if (fallData.result && fallData.result.trunk_number_list && fallData.result.trunk_number_list.length > 0) {
-                            trunkObj = fallData.result.trunk_number_list[0];
+                        if (fallData.result && Array.isArray(fallData.result.trunk_number_list)) {
+                            // 💥 BOSS FIX: Filter out Header objects, keep only valid number objects
+                            const validNumbers = fallData.result.trunk_number_list.filter(t => t.number || t.full_number || (t.number && t.number.full));
+                            
+                            if (validNumbers.length > 0) {
+                                // Sort by modified_at descending to grab the very latest allocated number
+                                validNumbers.sort((a, b) => new Date(b.modified_at || 0) - new Date(a.modified_at || 0));
+                                trunkObj = validNumbers[0];
+                            }
                         }
                     }
 
@@ -358,18 +295,23 @@ fastify.route({
                             const newOrder = new Order({
                                 userEmail: user.email,
                                 searchNumber: fullNum,
+                                requestedRange: rawRange, 
+                                trxId: String(trxId), 
                                 displayNumber: `+${fullNum}`,
                                 country: country,
                                 operator: "Any",
                                 status: "WAIT",
                                 fullMessage: "Waiting...",
                                 otp: "Waiting...", 
+                                trueService: "Unknown", 
                                 dateString: todayStr,
                                 expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
                             });
                             newOrder.save().catch(() => {});
                         });
                         
+                        console.log(`🚀 [SUCCESS] Final Number Extracted: +${fullNum}`);
+
                         return reply.status(200).send({
                             meta: { status: "success", code: 200 },
                             data: {
@@ -383,8 +325,8 @@ fastify.route({
                             }
                         });
                     } else {
-                        console.error("❌ [ERROR] Number object is missing the number field:", JSON.stringify(trunkObj));
-                        return reply.status(500).send({ meta: { status: "error" }, message: "Number assigned but retrieval string failed." });
+                        console.error("❌ [ERROR] Number object missing in lists.");
+                        return reply.status(500).send({ meta: { status: "error" }, message: "Number assigned but retrieval failed." });
                     }
                 } catch (numErr) {
                     clearTimeout(timeoutId);
@@ -483,12 +425,12 @@ fastify.get('/v1/active-ranges', async (request, reply) => {
         const hiddenKeywords = await getMaskingKeywords();
 
         const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-        const recentOrders = await Order.find({ status: { $in: ["DONE", "Success", "SUCCESS"] }, updatedAt: { $gte: oneHourAgo } }).select("fullMessage otp searchNumber number").lean();
+        const recentOrders = await Order.find({ status: { $in: ["DONE", "Success", "SUCCESS"] }, updatedAt: { $gte: oneHourAgo } }).select("fullMessage otp searchNumber number trueService").lean();
         const rangeMap = {};
 
         recentOrders.forEach((o) => {
             let msg = o.fullMessage || o.otp || "";
-            const rawService = extractServiceName(msg);
+            const rawService = o.trueService || "Unknown";
             const maskedService = applyMasking(rawService, hiddenKeywords); 
 
             let num = o.searchNumber || o.number || "";
@@ -497,7 +439,7 @@ fastify.get('/v1/active-ranges', async (request, reply) => {
             if (num.length >= 6) {
                 const rangeStr = num.substring(0, 6) + "XXX"; 
                 let tag = "General";
-                if (rawService === "Facebook" || rawService === "Meta") {
+                if (rawService.toLowerCase() === "facebook" || rawService.toLowerCase() === "meta") {
                     const match = msg.match(/\b\d{4,8}\b/);
                     if (match) {
                         if (match[0].length === 6 || match[0].length === 8) tag = "Fb Clone";
@@ -550,6 +492,146 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
         return reply.type('text/plain').send(textData);
     } catch (error) { return reply.status(500).send({ error: "Server Error" }); }
 });
+
+
+// ==========================================
+// 💥 SHARED LOGIC: DUAL-ENGINE OTP PROCESSOR (STRICT 20-MIN RULE) 💥
+// ==========================================
+const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
+    if (!text) return;
+    const query = trunkTxId ? { trxId: String(trunkTxId) } : { searchNumber: String(destNum).replace('+', '') };
+    const existingOrders = await Order.find(query).sort({ _id: 1 });
+    
+    if (existingOrders.length > 0) {
+        const baseOrder = existingOrders[0];
+
+        // 💥 THE BOSS RULE: 25 Minutes Maximum Hard Limit 💥
+        const orderAgeInMs = Date.now() - new Date(baseOrder.createdAt).getTime();
+        const maxAllowedTime = 25 * 60 * 1000; // 25 Minutes Backup Time
+        if (orderAgeInMs > maxAllowedTime || baseOrder.status === "FAIL" || baseOrder.status === "CANCEL") {
+            return; 
+        }
+
+        const strictOtp = extractStrictOTP(text);
+        
+        const isDuplicate = existingOrders.some(o => 
+            o.fullMessage === text || 
+            (o.fullMessage && o.fullMessage.includes(text)) || 
+            o.otp === strictOtp
+        );
+        
+        if (!isDuplicate) {
+            if (baseOrder.status === "WAIT") {
+                baseOrder.status = "DONE";
+                baseOrder.otp = strictOtp;
+                baseOrder.fullMessage = text;
+                baseOrder.trueService = senderId || "Unknown";
+                await baseOrder.save();
+            } else {
+                const newMultiOrder = new Order({
+                    userEmail: baseOrder.userEmail,
+                    userName: baseOrder.userName,
+                    userUid: baseOrder.userUid,
+                    agentEmail: baseOrder.agentEmail,
+                    searchNumber: baseOrder.searchNumber,
+                    displayNumber: baseOrder.displayNumber,
+                    country: baseOrder.country,
+                    operator: baseOrder.operator,
+                    dateString: baseOrder.dateString,
+                    orderCost: baseOrder.orderCost,
+                    orderCommission: baseOrder.orderCommission,
+                    requestedRange: baseOrder.requestedRange,
+                    trxId: baseOrder.trxId,
+                    status: "DONE",
+                    otp: strictOtp,
+                    fullMessage: text,
+                    trueService: senderId || "Unknown",
+                    expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+                });
+                await newMultiOrder.save();
+            }
+        }
+    }
+};
+
+// ==========================================
+// 💥 ENGINE 1: THE FUTURE WEBHOOK (PUSH) + IP FIREWALL 💥
+// ==========================================
+fastify.post('/v1/webhook/iprn-receive', async (request, reply) => {
+    try {
+        // 💥 SECURE IP FIREWALL 💥
+        const allowedIPs = ['51.38.107.49', '127.0.0.1']; 
+        const clientIP = request.ip;
+        
+        if (!allowedIPs.includes(clientIP)) {
+            console.warn(`🚨 Security Breach Blocked: Unauthorized Webhook attempt from IP: ${clientIP}`);
+            return reply.status(403).send({ success: false, message: "Unauthorized IP. ZENEX Security Firewall Active." });
+        }
+
+        const data = request.body || {};
+        
+        const trunkTxId = data.trunk_number_transaction_id || data.trxId;
+        const text = data.text || data.message || data.content;
+        const senderId = data.senderid || data.source_addr || "Unknown";
+        const destNum = data.destination_addr || data.number;
+
+        if (!text) {
+            return reply.status(400).send({ success: false, message: "No text found in payload" });
+        }
+
+        await processIncomingOTP(trunkTxId, text, senderId, destNum);
+
+        return reply.status(200).send({ success: true, message: "Webhook received and processed" });
+    } catch (error) {
+        console.error("❌ Webhook Processing Error:", error.message);
+        return reply.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+// ==========================================
+// 💥 ENGINE 2: THE TEMPORARY POLLER (PULL) 💥
+// ==========================================
+let isPolling = false;
+const pollIncomingOTPs = async () => {
+    if (!IPRN_SMS_TRUNK_ID || isPolling) return;
+    isPolling = true;
+    try {
+        const payload = {
+            jsonrpc: "2.0",
+            method: "sms.mdr_full:get_list",
+            params: { 
+                target: { "sms.trunk_id": IPRN_SMS_TRUNK_ID },
+                limit: 40 
+            },
+            id: Date.now()
+        };
+        
+        const res = await fetch(IPRN_API_URL, {
+            method: "POST",
+            headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        
+        const data = await res.json();
+        
+        if (data && data.result && Array.isArray(data.result.mdr_list)) {
+            for (const msg of data.result.mdr_list) {
+                const trunkTxId = msg.trunk_number_transaction_id;
+                const text = msg.text || msg.message || "";
+                const senderId = msg.senderid || msg.source_addr || "Unknown";
+                const destNum = msg.destination_addr || msg.number || "";
+                
+                await processIncomingOTP(trunkTxId, text, senderId, destNum);
+            }
+        }
+    } catch (err) {
+        // Poller errors silently suppressed to keep the event loop clean
+    } finally {
+        isPolling = false;
+    }
+};
+
+setInterval(pollIncomingOTPs, 5000);
 
 const startServer = async () => {
     try {
