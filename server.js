@@ -43,9 +43,18 @@ const getUTCDateString = (dateObj = new Date()) => new Date(dateObj).toISOString
 // ==========================================
 const IPRN_API_URL = "https://api.iprn-elite.com/v1.0";
 const IPRN_API_KEY = process.env.IPRN_API_KEY || "1ddOYcGxRcWUlyi6T7oZzA"; 
-let IPRN_TRUNK_ID = null;
+
+// 💥 BOSS FIX: Prioritize Trunk ID from .env configuration to prevent hardcoded conflicts 💥
+let IPRN_TRUNK_ID = process.env.IPRN_TRUNK_ID || null;
 
 const fetchIPRNTrunk = async () => {
+    // If IPRN_TRUNK_ID is already defined in .env, use it directly!
+    if (process.env.IPRN_TRUNK_ID) {
+        IPRN_TRUNK_ID = process.env.IPRN_TRUNK_ID.trim();
+        console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded directly from .ENV: [${IPRN_TRUNK_ID}]`);
+        return;
+    }
+
     try {
         const payload = { jsonrpc: "2.0", method: "sms.trunk:get_list", params: {}, id: Date.now() };
         const res = await fetch(IPRN_API_URL, {
@@ -56,10 +65,9 @@ const fetchIPRNTrunk = async () => {
         const data = await res.json();
         
         if (data && data.result && data.result.trunk_list && data.result.trunk_list.length > 0) {
-            // 💥 BOSS FIX: TEMPORARILY SWITCHED TO 'GLOBAL ACCESS' TRUNK TO TEST PERMISSIONS 💥
             const otpTrunk = data.result.trunk_list.find(t => t.name && t.name.toLowerCase() === "global access");
             IPRN_TRUNK_ID = otpTrunk ? otpTrunk.id : data.result.trunk_list[0].id;
-            console.log(`🔥 IPRN Elite Connected! Trunk ID Loaded: [${IPRN_TRUNK_ID}] (Name: ${otpTrunk ? otpTrunk.name : data.result.trunk_list[0].name})`);
+            console.log(`🔥 IPRN Elite Connected! Auto-Fetched Trunk ID Loaded: [${IPRN_TRUNK_ID}] (Name: ${otpTrunk ? otpTrunk.name : data.result.trunk_list[0].name})`);
         } else {
             console.warn("⚠️ IPRN Trunk list is empty or invalid format. Retrying in 10s...");
             setTimeout(fetchIPRNTrunk, 10000);
