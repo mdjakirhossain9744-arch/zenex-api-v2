@@ -225,10 +225,16 @@ fastify.route({
                 const trxId = data.result.message_id || "";
                 const country = data.result.number.country_code || "Unknown";
                 
+                // Fallback calculations for frontend safety
+                const localNum = fullNum.startsWith(country) ? fullNum.slice(country.length) : fullNum;
+                const isoCode = "Unknown";
+                
                 clearTimeout(timeoutId);
                 const todayStr = getUTCDateString();
                 
-                setImmediate(() => {
+                // 💥 BOSS FIX: SECURE DB SAVE & ID EXTRACTION 💥
+                let generatedOrderId = null;
+                try {
                     const newOrder = new Order({
                         userEmail: user.email,
                         searchNumber: fullNum,
@@ -244,22 +250,33 @@ fastify.route({
                         dateString: todayStr,
                         expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
                     });
-                    newOrder.save().catch(() => {});
-                });
+                    const savedOrder = await newOrder.save();
+                    generatedOrderId = savedOrder._id.toString(); // EXTRACING THE ID
+                } catch (dbErr) {
+                    console.error("⚠️ Local DB Save Error:", dbErr.message);
+                }
                 
-                console.log(`🚀 [SUCCESS] Instant Number Allocated: +${fullNum} | MSG ID: ${trxId}`);
+                console.log(`🚀 [SUCCESS] Instant Number Allocated: +${fullNum} | MSG ID: ${trxId} | ORDER ID: ${generatedOrderId}`);
 
+                // 💥 BOSS FIX: STRICT FRONTEND-COMPATIBLE RESPONSE 💥
                 return reply.status(200).send({
-                    meta: { status: "success", code: 200 },
+                    success: true,
+                    meta: { 
+                        status: "success", 
+                        code: 200 
+                    },
                     data: {
                         copy: `+${fullNum}`,
                         number: `+${fullNum}`,
                         full_number: fullNum,
-                        country: country,
-                        iso: "Unknown",
+                        national_number: localNum.startsWith('0') ? localNum : `0${localNum}`,
+                        country: country, 
+                        iso: isoCode,
                         operator: "Any",
                         status: "pending"
-                    }
+                    },
+                    orderId: generatedOrderId, 
+                    message: "Virtual number provisioned successfully"
                 });
             }
 
@@ -498,7 +515,6 @@ fastify.post('/v1/webhook/iprn-receive', async (request, reply) => {
 
         const data = request.body || {};
         
-        // Match message_id to trxId for 1-Step allocation
         const trunkTxId = data.message_id || data.trunk_number_transaction_id || data.trxId;
         const text = data.text || data.message || data.content;
         const senderId = data.senderid || data.source_addr || "Unknown";
@@ -545,7 +561,6 @@ const pollIncomingOTPs = async () => {
         
         if (data && data.result && Array.isArray(data.result.mdr_list)) {
             for (const msg of data.result.mdr_list) {
-                // Support both legacy trunk TxId and realtime message_id
                 const trunkTxId = msg.message_id || msg.trunk_number_transaction_id;
                 const text = msg.text || msg.message || "";
                 const senderId = msg.senderid || msg.source_addr || "Unknown";
