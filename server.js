@@ -232,7 +232,7 @@ fastify.route({
                 clearTimeout(timeoutId);
                 const todayStr = getUTCDateString();
                 
-                // 💥 BOSS FIX: SECURE DB SAVE & ID EXTRACTION 💥
+                // 💥 SECURE DB SAVE & ID EXTRACTION 💥
                 let generatedOrderId = null;
                 try {
                     const newOrder = new Order({
@@ -251,7 +251,7 @@ fastify.route({
                         expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
                     });
                     const savedOrder = await newOrder.save();
-                    generatedOrderId = savedOrder._id.toString(); // EXTRACING THE ID
+                    generatedOrderId = savedOrder._id.toString(); 
                 } catch (dbErr) {
                     console.error("⚠️ Local DB Save Error:", dbErr.message);
                 }
@@ -260,22 +260,18 @@ fastify.route({
 
                 // 💥 BOSS FIX: STRICT FRONTEND-COMPATIBLE RESPONSE 💥
                 return reply.status(200).send({
-                    success: true,
-                    meta: { 
-                        status: "success", 
-                        code: 200 
-                    },
+                    meta: { status: "success", code: 200 },
                     data: {
                         copy: `+${fullNum}`,
                         number: `+${fullNum}`,
                         full_number: fullNum,
                         national_number: localNum.startsWith('0') ? localNum : `0${localNum}`,
-                        country: country, 
+                        country: "Unknown",
                         iso: isoCode,
                         operator: "Any",
                         status: "pending"
                     },
-                    orderId: generatedOrderId, 
+                    orderId: generatedOrderId, // <-- CRITICAL FIX: Put directly in root
                     message: "Virtual number provisioned successfully"
                 });
             }
