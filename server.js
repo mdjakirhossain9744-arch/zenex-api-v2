@@ -44,7 +44,6 @@ const getUTCDateString = (dateObj = new Date()) => new Date(dateObj).toISOString
 const IPRN_API_URL = "https://api.iprn-elite.com/v1.0";
 const IPRN_API_KEY = process.env.IPRN_API_KEY || "1ddOYcGxRcWUlyi6T7oZzA"; 
 
-// 💥 BOSS FIX: ENV Priority for SMS Trunk ID 💥
 let IPRN_SMS_TRUNK_ID = process.env.IPRN_SMS_TRUNK_ID || null;
 
 const fetchIPRNTrunk = async () => {
@@ -251,7 +250,7 @@ fastify.route({
             if (!IPRN_SMS_TRUNK_ID) return reply.status(503).send({ meta: { status: "error" }, message: "System Initializing. Please wait." });
 
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); 
+            const timeoutId = setTimeout(() => controller.abort(), 12000); 
             request.raw.on('close', () => { if (request.raw.aborted) controller.abort(); });
 
             const reqData = request.body || request.query || {};
@@ -265,7 +264,7 @@ fastify.route({
 
             let response;
             try {
-                // 💥 THE BOSS FIX: STRICT SMS API PAYLOAD FORMAT 💥
+                // 💥 STEP 1: EXACT SMS ALLOCATION PAYLOAD 💥
                 const payload = {
                     jsonrpc: "2.0",
                     method: "sms.allocation:template_by_account_user",
@@ -277,7 +276,7 @@ fastify.route({
                         numbers: 1,
                         random_number: true
                     },
-                    id: null
+                    id: Date.now()
                 };
 
                 response = await fetch(IPRN_API_URL, {
@@ -286,55 +285,107 @@ fastify.route({
                     body: JSON.stringify(payload),
                     signal: controller.signal
                 });
-                clearTimeout(timeoutId);
             } catch (fetchError) {
                 clearTimeout(timeoutId);
                 return reply.status(504).send({ meta: { status: "error" }, message: "Provider is slow. Try again." });
             }
 
             let data;
-            try { data = await response.json(); } catch(e) { return reply.status(502).send({ meta: { status: "error" }, message: "Invalid upstream response" }); }
-
-            // 💥 REALTIME RESPONSE PARSING 💥
-            if (data.result && data.result.reply === "success" && data.result.number && data.result.number.full) {
-                const todayStr = getUTCDateString();
-                const providerNumber = String(data.result.number.full); 
-                const fullNum = providerNumber.includes('+') ? providerNumber.replace('+', '') : providerNumber;
-                
-                setImmediate(() => {
-                    const newOrder = new Order({
-                        userEmail: user.email,
-                        searchNumber: fullNum,
-                        displayNumber: `+${fullNum}`,
-                        country: data.result.number.country_code || "Unknown",
-                        operator: "Any",
-                        status: "WAIT",
-                        fullMessage: "Waiting...",
-                        otp: "Waiting...", 
-                        dateString: todayStr,
-                        expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
-                    });
-                    newOrder.save().catch(() => {});
-                });
-                
-                return reply.status(200).send({
-                    meta: { status: "success", code: 200 },
-                    data: {
-                        copy: `+${fullNum}`,
-                        number: `+${fullNum}`,
-                        full_number: fullNum,
-                        country: data.result.number.country_code || "Unknown",
-                        iso: "Unknown",
-                        operator: "Any",
-                        status: "pending"
-                    }
-                });
+            try { data = await response.json(); } catch(e) { 
+                clearTimeout(timeoutId);
+                return reply.status(502).send({ meta: { status: "error" }, message: "Invalid upstream response" }); 
             }
 
+            // 💥 STEP 2: PARSE SUCCESS TRANSACTION AND FETCH ACTUAL NUMBER 💥
+            if (data.result && data.result.trunk_number_transaction && data.result.trunk_number_transaction.id) {
+                const trxId = data.result.trunk_number_transaction.id;
+                
+                try {
+                    // Method to fetch the string of the allocated number
+                    const fetchNumPayload = {
+                        jsonrpc: "2.0",
+                        method: "sms.trunk_number:get_list",
+                        params: { trunk_number_transaction_id: trxId },
+                        id: Date.now()
+                    };
+
+                    const numRes = await fetch(IPRN_API_URL, {
+                        method: "POST",
+                        headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
+                        body: JSON.stringify(fetchNumPayload),
+                        signal: controller.signal
+                    });
+                    
+                    const numData = await numRes.json();
+                    let trunkObj = null;
+
+                    if (numData.result && numData.result.trunk_number_list && numData.result.trunk_number_list.length > 0) {
+                        trunkObj = numData.result.trunk_number_list[0];
+                    } else {
+                        // 💥 FALLBACK: If direct transaction filter fails, fetch the latest number globally from this trunk 💥
+                        const fallbackPayload = {
+                            jsonrpc: "2.0",
+                            method: "sms.trunk_number:get_list",
+                            params: { trunk_id: IPRN_SMS_TRUNK_ID, limit: 1 },
+                            id: Date.now()
+                        };
+                        const fallRes = await fetch(IPRN_API_URL, { method: "POST", headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify(fallbackPayload) });
+                        const fallData = await fallRes.json();
+                        if (fallData.result && fallData.result.trunk_number_list && fallData.result.trunk_number_list.length > 0) {
+                            trunkObj = fallData.result.trunk_number_list[0];
+                        }
+                    }
+
+                    clearTimeout(timeoutId);
+
+                    if (trunkObj && trunkObj.number) {
+                        const todayStr = getUTCDateString();
+                        const providerNumber = String(trunkObj.number); 
+                        const fullNum = providerNumber.includes('+') ? providerNumber.replace('+', '') : providerNumber;
+                        const country = trunkObj.country_name || trunkObj.country_code || "Unknown";
+                        
+                        setImmediate(() => {
+                            const newOrder = new Order({
+                                userEmail: user.email,
+                                searchNumber: fullNum,
+                                displayNumber: `+${fullNum}`,
+                                country: country,
+                                operator: "Any",
+                                status: "WAIT",
+                                fullMessage: "Waiting...",
+                                otp: "Waiting...", 
+                                dateString: todayStr,
+                                expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+                            });
+                            newOrder.save().catch(() => {});
+                        });
+                        
+                        return reply.status(200).send({
+                            meta: { status: "success", code: 200 },
+                            data: {
+                                copy: `+${fullNum}`,
+                                number: `+${fullNum}`,
+                                full_number: fullNum,
+                                country: country,
+                                iso: "Unknown",
+                                operator: "Any",
+                                status: "pending"
+                            }
+                        });
+                    } else {
+                        return reply.status(500).send({ meta: { status: "error" }, message: "Number assigned but retrieval string failed." });
+                    }
+                } catch (numErr) {
+                    clearTimeout(timeoutId);
+                    return reply.status(500).send({ meta: { status: "error" }, message: "Failed to retrieve allocated number details." });
+                }
+            }
+
+            clearTimeout(timeoutId);
             console.error("⚠️ IPRN Rejection Log:", JSON.stringify(data));
             return reply.status(400).send({ 
                 meta: { status: "error" }, 
-                message: data.result?.reply || data.error?.message || "Out of stock or Invalid Range" 
+                message: data.error?.message || "Out of stock or Invalid Range" 
             });
         } catch (error) {
             return reply.status(500).send({ meta: { status: "error" }, message: "Server Error" });
