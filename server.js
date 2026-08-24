@@ -188,11 +188,15 @@ fastify.route({
 
             // 💥 BOSS INSTRUCTION STRICT FIX: Absolute Data Integrity Check 💥
             if (cleanKey === "ZENEX_INTERNAL_DASHBOARD_PASS") {
-                const dashEmail = request.headers['x-dashboard-user'];
+                let dashEmail = request.headers['x-dashboard-user'];
+                if (Array.isArray(dashEmail)) dashEmail = dashEmail[0]; // Ensure it's a string
+                
                 if (!dashEmail) return reply.status(403).send({ meta: { status: "error" }, message: "Unauthorized Dashboard Request. Headers Stripped." });
                 
-                // No Fallbacks. Must find exact user in DB.
-                user = await User.findOne({ email: dashEmail }).lean();
+                // 💥 ENTERPRISE FIX: Case-Insensitive Exact Match (HTTP headers are always lowercase) 💥
+                const safeEmail = dashEmail.trim();
+                user = await User.findOne({ email: new RegExp(`^${escapeRegExp(safeEmail)}$`, 'i') }).lean();
+                
                 if (!user) return reply.status(403).send({ meta: { status: "error" }, message: "Critical: User Data Missing in Database. Aborting transaction." });
             } else {
                 let cachedObj = apiAuthCache.get(cleanKey);
