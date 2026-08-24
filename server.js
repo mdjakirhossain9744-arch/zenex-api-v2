@@ -75,6 +75,32 @@ const fetchIPRNTrunk = async () => {
     }
 };
 
+// ==========================================
+// 💥 GLOBAL SDE CACHE & FETCHER 💥
+// ==========================================
+const globalSdeMap = new Map();
+
+const fetchSdeList = async () => {
+    try {
+        const payload = { jsonrpc: "2.0", method: "sms.realtime:get_subdestination_list", params: {}, id: Date.now() };
+        const res = await fetch(IPRN_API_URL, {
+            method: "POST",
+            headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        
+        if (data?.result?.subdestination_list) {
+            data.result.subdestination_list.forEach(item => {
+                globalSdeMap.set(item.sde_key, item.name);
+            });
+            console.log(`✅ Official SDE Dictionary Loaded: ${globalSdeMap.size} destinations cached.`);
+        }
+    } catch (e) {
+        console.error("⚠️ Failed to load SDE list:", e.message);
+    }
+};
+
 const apiAuthCache = new Map();
 const globalWorkerUserCache = new Map(); 
 const userOtpResponseCache = new Map(); 
@@ -219,14 +245,29 @@ fastify.route({
                 return reply.status(502).send({ meta: { status: "error" }, message: "Invalid upstream response" }); 
             }
 
-            // 💥 INSTANT NUMBER EXTRACTION (ZERO SECONDARY CALLS) 💥
+            // 💥 INSTANT NUMBER EXTRACTION 💥
             if (data.result && data.result.number && data.result.number.full) {
                 const fullNum = data.result.number.full;
                 const trxId = data.result.message_id || "";
-                const country = data.result.number.country_code || "Unknown";
+                const countryCode = data.result.number.country_code || "Unknown";
                 
-                // Fallback calculations for frontend safety
-                const localNum = fullNum.startsWith(country) ? fullNum.slice(country.length) : fullNum;
+                // 💥 SDE TRANSLATION LOGIC 💥
+                let exactCountry = "Unknown";
+                let exactOperator = "Any";
+
+                if (data.result.sde_key) {
+                    const rawName = globalSdeMap.get(data.result.sde_key) || "Unknown - Any";
+                    const parts = rawName.split(' - ');
+                    exactCountry = parts[0] ? parts[0].trim() : "Unknown";
+                    
+                    if (parts.length >= 3) {
+                        exactOperator = parts[2].trim().replace(/\s*\d+XXX/g, ''); 
+                    } else if (parts.length === 2 && !parts[1].toLowerCase().includes('mobile')) {
+                        exactOperator = parts[1].trim();
+                    }
+                }
+
+                const localNum = fullNum.startsWith(countryCode) ? fullNum.slice(countryCode.length) : fullNum;
                 const isoCode = "Unknown";
                 
                 clearTimeout(timeoutId);
@@ -241,8 +282,8 @@ fastify.route({
                         requestedRange: rawRange, 
                         trxId: String(trxId), 
                         displayNumber: `+${fullNum}`,
-                        country: country,
-                        operator: "Any",
+                        country: exactCountry,
+                        operator: exactOperator,
                         status: "WAIT",
                         fullMessage: "Waiting...",
                         otp: "Waiting...", 
@@ -256,9 +297,9 @@ fastify.route({
                     console.error("⚠️ Local DB Save Error:", dbErr.message);
                 }
                 
-                console.log(`🚀 [SUCCESS] Instant Number Allocated: +${fullNum} | MSG ID: ${trxId} | ORDER ID: ${generatedOrderId}`);
+                console.log(`🚀 [SUCCESS] Number: +${fullNum} | Country: ${exactCountry} | Operator: ${exactOperator}`);
 
-                // 💥 BOSS FIX: STRICT FRONTEND-COMPATIBLE RESPONSE 💥
+                // 💥 STRICT FRONTEND-COMPATIBLE RESPONSE 💥
                 return reply.status(200).send({
                     meta: { status: "success", code: 200 },
                     data: {
@@ -266,12 +307,12 @@ fastify.route({
                         number: `+${fullNum}`,
                         full_number: fullNum,
                         national_number: localNum.startsWith('0') ? localNum : `0${localNum}`,
-                        country: "Unknown",
+                        country: exactCountry,
                         iso: isoCode,
-                        operator: "Any",
+                        operator: exactOperator,
                         status: "pending"
                     },
-                    orderId: generatedOrderId, // <-- CRITICAL FIX: Put directly in root
+                    orderId: generatedOrderId, 
                     message: "Virtual number provisioned successfully"
                 });
             }
@@ -578,6 +619,7 @@ const startServer = async () => {
     try {
         await connectDB();
         await fetchIPRNTrunk(); 
+        await fetchSdeList(); // 💥 SDE CACHE LOAD ON STARTUP 💥
         await fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' });
         console.log(`⚡ ZENEX Microservice V2 is LIVE at: http://localhost:${process.env.PORT || 5000}`);
     } catch (err) { process.exit(1); }
