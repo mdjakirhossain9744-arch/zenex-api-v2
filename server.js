@@ -167,7 +167,6 @@ const fetchGlobalAccessList = async () => {
 
         if (Array.isArray(list) && list.length > 0) {
             const formattedList = list.map(item => {
-                // 💥 BOSS LOGIC: Skip if Hourly Limit is Full 💥
                 const limitHour = item.limit_hour || 0;
                 const counterHour = item.counter_hour || 0;
                 if (limitHour > 0 && counterHour >= limitHour) return null;
@@ -177,7 +176,6 @@ const fetchGlobalAccessList = async () => {
                 
                 const rangeStr = item.b_number || (item.b_test_number_list && item.b_test_number_list[0] ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" : "Unknown");
 
-                // 💥 BOSS LOGIC: High Limit = Good Traffic 💥
                 const limitDay = item.limit_day || 0;
                 let trafficLevel = "GOOD";
                 if (limitDay >= 5000) trafficLevel = "EXCELLENT";
@@ -185,6 +183,7 @@ const fetchGlobalAccessList = async () => {
 
                 const rawSearchStr = `${extractedService} ${sdeName} ${rangeStr}`.toLowerCase();
 
+                // 💥 ZENEX DATA SHIELD: Strip all provider keys and use 100% Zenex Custom Keys 💥
                 return {
                     service: extractedService,
                     country_operator: sdeName,
@@ -195,7 +194,7 @@ const fetchGlobalAccessList = async () => {
                     last_update: item.datetime || "",
                     _rawSearchStr: rawSearchStr 
                 };
-            }).filter(Boolean); // Remove skipped items
+            }).filter(Boolean); 
             
             globalActiveAccessList = formattedList;
             console.log(`✅ [SUCCESS] Global Access List Loaded & Secured: ${globalActiveAccessList.length} nodes active in RAM.`);
@@ -561,7 +560,7 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     }
 });
 
-// 💥 BOSS UPGRADE: ENTERPRISE HYBRID DYNAMIC SEARCH (STRICT ORIGIN FILTERING) 💥
+// 💥 BOSS UPGRADE: ENTERPRISE HYBRID DYNAMIC SEARCH (TIME-BASED SORTING) 💥
 fastify.get('/v1/access-list', async (request, reply) => {
     try {
         const requestedService = (request.query.service || "").trim();
@@ -597,7 +596,6 @@ fastify.get('/v1/access-list', async (request, reply) => {
             
             if (data?.result?.access_list_list && data.result.access_list_list.length > 0) {
                 let directResults = data.result.access_list_list.map(item => {
-                    // 💥 BOSS LOGIC: Skip if Hourly Limit is Full 💥
                     const limitHour = item.limit_hour || 0;
                     const counterHour = item.counter_hour || 0;
                     if (limitHour > 0 && counterHour >= limitHour) return null;
@@ -606,7 +604,6 @@ fastify.get('/v1/access-list', async (request, reply) => {
                     const sdeName = item.b_description || item.subdestination_name || "Unknown";
                     const rangeStr = item.b_number || (item.b_test_number_list && item.b_test_number_list[0] ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" : "Unknown");
 
-                    // 💥 BOSS LOGIC: High Limit = Good Traffic 💥
                     const limitDay = item.limit_day || 0;
                     let trafficLevel = "GOOD";
                     if (limitDay >= 5000) trafficLevel = "EXCELLENT";
@@ -621,9 +618,15 @@ fastify.get('/v1/access-list', async (request, reply) => {
                         message_template: item.message || "No Message Data",
                         last_update: item.datetime || ""
                     };
-                }).filter(Boolean); // Remove skipped items
+                }).filter(Boolean); 
                 
-                directResults.sort((a, b) => a.country_operator.localeCompare(b.country_operator)); 
+                // 💥 BOSS FIX: Time-Based Sorting (Latest First) just like Provider 💥
+                directResults.sort((a, b) => {
+                    const timeA = new Date(a.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
+                    const timeB = new Date(b.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
+                    return timeB - timeA; 
+                });
+                
                 console.log(`✅ [DEBUG] Direct IPRN API returned ${directResults.length} pure nodes for query.`);
                 return reply.send({ success: true, data: directResults });
             } else {
@@ -638,7 +641,13 @@ fastify.get('/v1/access-list', async (request, reply) => {
             return matchService && matchCountry;
         });
 
-        matchedRanges.sort((a, b) => a.country_operator.localeCompare(b.country_operator)); 
+        // 💥 BOSS FIX: Time-Based Sorting (Latest First) just like Provider 💥
+        matchedRanges.sort((a, b) => {
+            const timeA = new Date(a.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
+            const timeB = new Date(b.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
+            return timeB - timeA; 
+        });
+        
         const sanitizedResults = matchedRanges.slice(0, 20).map(({ _rawSearchStr, ...rest }) => rest);
         
         console.log(`✅ [DEBUG] Found ${sanitizedResults.length} default nodes in RAM.`);
