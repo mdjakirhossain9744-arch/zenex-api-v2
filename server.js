@@ -105,29 +105,22 @@ const fetchSdeList = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (FIXED STRICT PAYLOAD VALIDATION) 💥
+// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (BULLETPROOF PARSER) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
     try {
         console.log("⏳ Fetching Global Access List from IPRN...");
-        
         const payload = {
             jsonrpc: "2.0",
-            method: "sms.access_list__get_list:account_price", 
-            params: { 
-                filter: { 
-                    cur_key: 1,
-                    sp_key_list: null, 
-                    str: "", 
-                    str2: "" 
-                }, 
-                page: 1, 
-                per_page: 5000 
+            method: "sms.access_list__get_list:account_price",
+            params: {
+                filter: { cur_key: 1, sp_key_list: null, str: "", str2: "" },
+                page: 1,
+                per_page: 5000
             },
             id: Date.now()
         };
-        
         const res = await fetch(IPRN_API_URL, {
             method: "POST",
             headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
@@ -135,28 +128,35 @@ const fetchGlobalAccessList = async () => {
         });
         const data = await res.json();
 
-        if (data.error) {
-            console.error("❌ IPRN API Error:", JSON.stringify(data.error));
-            return;
-        }
+        // 💥 BOSS FIX: Correctly check for 'access_list_list'
+        const list = data?.result?.access_list_list;
 
-        console.log("🔍 [DEBUG] Provider Access List Raw Response Code:", data?.meta?.code || data?.jsonrpc || "No Meta");
+        if (Array.isArray(list) && list.length > 0) {
+            // Safely map the data
+            const formattedList = list.map(item => {
+                const sdeName = item.subdestination_name || "Unknown";
+                const extractedRange = item.b_test_number_list && item.b_test_number_list[0] 
+                    ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
+                    : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
 
-        const rawList = data?.result?.list || data?.result?.account_price_list || data?.result?.access_list || [];
-        
-        if (rawList.length > 0) {
-            globalActiveAccessList = rawList.map(item => ({
-                service: item.access_origin_name || item.access_origin || item.service || "Unknown",
-                country_operator: item.sde_name || item.destination || "Unknown",
-                price: item.price || item.rate || 0,
-                prefix: item.prefix || item.range || ""
-            }));
-            console.log(`✅ [DEBUG] Successfully mapped ${globalActiveAccessList.length} global access nodes into RAM.`);
+                return {
+                    service: item.a_description || item.service_plan_name || "OTP",
+                    country_operator: sdeName,
+                    range: extractedRange,
+                    prefix: extractedRange, // Added prefix for Frontend UI compatibility
+                    payout: item.payment_terms_rate_list && item.payment_terms_rate_list[0] 
+                        ? item.payment_terms_rate_list[0].rate 
+                        : 0.01
+                };
+            });
+
+            globalActiveAccessList = formattedList;
+            console.log(`✅ [SUCCESS] Global Access List Loaded: ${globalActiveAccessList.length} nodes active in RAM.`);
         } else {
-            console.error("❌ [DEBUG] Failed to load access list. Provider returned:", JSON.stringify(data).substring(0, 300));
+            console.error("❌ [ERROR] Parser failed or list empty. Raw:", JSON.stringify(data.result).substring(0, 100));
         }
-    } catch (e) {
-        console.error("❌ Failed to fetch Global Access List:", e.message);
+    } catch (err) {
+        console.error("❌ Fetch Error:", err.message);
     }
 };
 setInterval(fetchGlobalAccessList, 10 * 60 * 1000);
