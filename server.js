@@ -105,7 +105,7 @@ const fetchSdeList = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (ENTERPRISE OMNI-SEARCH MAPPING) 💥
+// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (RAW DATA DUMP & DEBUGGING) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
@@ -131,49 +131,34 @@ const fetchGlobalAccessList = async () => {
         const list = data?.result?.access_list_list;
 
         if (Array.isArray(list) && list.length > 0) {
+            // 💥 CRITICAL DEBUG LOG: Print exact structure of the first item 💥
+            console.log("🔍 [DEBUG RAW PROVIDER OBJECT]:", JSON.stringify(list[0], null, 2));
+
             const formattedList = list.map(item => {
-                // 1. Create a hidden Omni-Search string from the raw item
                 const rawString = JSON.stringify(item).toLowerCase(); 
                 
-                // 2. Safely extract Service Name
                 let extractedService = item.origin || item.access_origin || item.a_description || "OTP";
-                // Omni-Search Fallbacks if origin is obscure
                 if (rawString.includes("facebook")) extractedService = "Facebook";
                 else if (rawString.includes("whatsapp")) extractedService = "WhatsApp";
                 else if (rawString.includes("telegram")) extractedService = "Telegram";
                 else if (rawString.includes("12go")) extractedService = "12Go";
-                else if (rawString.includes("instagram")) extractedService = "Instagram";
 
-                // 3. Extract Country and Operator
-                const sdeName = item.subdestination_name || item.sde_name || "Unknown";
-
-                // 4. Calculate Enterprise Traffic Levels
-                const limitDay = item.limit_day || 0;
-                const counterDay = item.counter_day || 0;
-                const remaining = Math.max(0, limitDay - counterDay);
-                const numbersCount = item.numbers_count || item.available_numbers || 0;
-                
-                let trafficLevel = "STABLE";
-                if (remaining > 5000 || numbersCount > 50) trafficLevel = "HIGH";
-                else if (remaining < 100 || numbersCount < 5) trafficLevel = "LOW";
-
-                const extractedRange = item.b_test_number_list && item.b_test_number_list[0] 
-                    ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
-                    : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
-
-                // 5. Build Zenex V2 Standard Object
                 return {
                     service: extractedService,
-                    country_operator: sdeName,
-                    range: extractedRange,
-                    prefix: extractedRange, // Added for frontend compatibility
-                    payout: item.rate || item.price || 0.01,
-                    traffic_level: trafficLevel,
-                    remaining_capacity: remaining,
-                    _rawSearchStr: rawString // HIDDEN FIELD FOR INTERNAL SEARCHING ONLY
+                    country_operator: item.subdestination_name || item.sde_name || "Unknown",
+                    range: item.b_test_number_list && item.b_test_number_list[0] 
+                        ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
+                        : "Unknown",
+                    prefix: item.b_test_number_list && item.b_test_number_list[0] 
+                        ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
+                        : "Unknown",
+                    payout: item.rate || 0.01,
+                    traffic_level: "STABLE",
+                    remaining_capacity: 1000,
+                    _rawSearchStr: rawString
                 };
             });
-
+            
             globalActiveAccessList = formattedList;
             console.log(`✅ [SUCCESS] Global Access List Loaded: ${globalActiveAccessList.length} nodes active in RAM.`);
         } else {
