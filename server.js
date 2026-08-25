@@ -105,7 +105,7 @@ const fetchSdeList = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (BULLETPROOF PARSER) 💥
+// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (ENTERPRISE OMNI-SEARCH MAPPING) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
@@ -128,25 +128,49 @@ const fetchGlobalAccessList = async () => {
         });
         const data = await res.json();
 
-        // 💥 BOSS FIX: Correctly check for 'access_list_list'
         const list = data?.result?.access_list_list;
 
         if (Array.isArray(list) && list.length > 0) {
-            // Safely map the data
             const formattedList = list.map(item => {
-                const sdeName = item.subdestination_name || "Unknown";
+                // 1. Create a hidden Omni-Search string from the raw item
+                const rawString = JSON.stringify(item).toLowerCase(); 
+                
+                // 2. Safely extract Service Name
+                let extractedService = item.origin || item.access_origin || item.a_description || "OTP";
+                // Omni-Search Fallbacks if origin is obscure
+                if (rawString.includes("facebook")) extractedService = "Facebook";
+                else if (rawString.includes("whatsapp")) extractedService = "WhatsApp";
+                else if (rawString.includes("telegram")) extractedService = "Telegram";
+                else if (rawString.includes("12go")) extractedService = "12Go";
+                else if (rawString.includes("instagram")) extractedService = "Instagram";
+
+                // 3. Extract Country and Operator
+                const sdeName = item.subdestination_name || item.sde_name || "Unknown";
+
+                // 4. Calculate Enterprise Traffic Levels
+                const limitDay = item.limit_day || 0;
+                const counterDay = item.counter_day || 0;
+                const remaining = Math.max(0, limitDay - counterDay);
+                const numbersCount = item.numbers_count || item.available_numbers || 0;
+                
+                let trafficLevel = "STABLE";
+                if (remaining > 5000 || numbersCount > 50) trafficLevel = "HIGH";
+                else if (remaining < 100 || numbersCount < 5) trafficLevel = "LOW";
+
                 const extractedRange = item.b_test_number_list && item.b_test_number_list[0] 
                     ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
                     : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
 
+                // 5. Build Zenex V2 Standard Object
                 return {
-                    service: item.a_description || item.service_plan_name || "OTP",
+                    service: extractedService,
                     country_operator: sdeName,
                     range: extractedRange,
-                    prefix: extractedRange, // Added prefix for Frontend UI compatibility
-                    payout: item.payment_terms_rate_list && item.payment_terms_rate_list[0] 
-                        ? item.payment_terms_rate_list[0].rate 
-                        : 0.01
+                    prefix: extractedRange, // Added for frontend compatibility
+                    payout: item.rate || item.price || 0.01,
+                    traffic_level: trafficLevel,
+                    remaining_capacity: remaining,
+                    _rawSearchStr: rawString // HIDDEN FIELD FOR INTERNAL SEARCHING ONLY
                 };
             });
 
@@ -514,7 +538,7 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     }
 });
 
-// 💥 BOSS UPGRADE: DYNAMIC RAM FILTERING API WITH LOGS 💥
+// 💥 BOSS UPGRADE: DYNAMIC RAM FILTERING (WITH OMNI-SEARCH & SANITIZATION) 💥
 fastify.get('/v1/access-list', async (request, reply) => {
     try {
         const requestedService = (request.query.service || "").toLowerCase();
@@ -524,16 +548,19 @@ fastify.get('/v1/access-list', async (request, reply) => {
         console.log(`🔍 [DEBUG] Total Nodes currently in RAM: ${globalActiveAccessList.length}`);
 
         const matchedRanges = globalActiveAccessList.filter(item => {
-            const matchService = requestedService ? (item.service || "").toLowerCase().includes(requestedService) : true;
+            const matchService = requestedService ? item._rawSearchStr.includes(requestedService) : true;
             const matchCountry = requestedCountry ? (item.country_operator || "").toLowerCase().includes(requestedCountry) : true;
             return matchService && matchCountry;
         });
 
         console.log(`✅ [DEBUG] Found ${matchedRanges.length} matching nodes.`);
         
+        // Remove the hidden `_rawSearchStr` before sending to clients for strict white-labeling
+        const sanitizedResults = matchedRanges.slice(0, 20).map(({ _rawSearchStr, ...rest }) => rest);
+        
         return reply.send({
             success: true,
-            data: matchedRanges.slice(0, 20) 
+            data: sanitizedResults 
         });
     } catch (error) {
         return reply.status(500).send({ success: false, message: "Server Error" });
