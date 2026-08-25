@@ -105,7 +105,7 @@ const fetchSdeList = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (OFFICIAL METHOD ONLY) 💥
+// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (FIXED STRICT PAYLOAD VALIDATION) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
@@ -114,9 +114,14 @@ const fetchGlobalAccessList = async () => {
         
         const payload = {
             jsonrpc: "2.0",
-            method: "sms.access_list__get_list:account_price", // <-- EXACT OFFICIAL NAME AS REQUESTED
+            method: "sms.access_list__get_list:account_price", 
             params: { 
-                filter: { str: "", str2: "" }, 
+                filter: { 
+                    cur_key: 1,
+                    sp_key_list: null, 
+                    str: "", 
+                    str2: "" 
+                }, 
                 page: 1, 
                 per_page: 5000 
             },
