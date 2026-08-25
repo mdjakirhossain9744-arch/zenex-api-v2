@@ -134,6 +134,15 @@ const KNOWN_SP_KEYS = {
     128: "Amazon", 135: "Snapchat", 145: "Discord", 146: "Netflix", 168: "Tinder"
 };
 
+// 💥 BOSS UPGRADE: RATE LIMITER MAP (DDoS & Spam Protection) 💥
+const requestRateLimitMap = new Map();
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, timestamp] of requestRateLimitMap.entries()) {
+        if (now - timestamp > 5000) requestRateLimitMap.delete(key);
+    }
+}, 10000);
+
 // 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (ULTRA-SECURE OMNI-SEARCH MAPPING) 💥
 let globalActiveAccessList = [];
 
@@ -151,6 +160,8 @@ const fetchGlobalAccessList = async () => {
                     origin: "", 
                     sp_key_list: null 
                 },
+                sort1: "datetime",
+                sort1_desc: true,
                 page: 1,
                 per_page: 5000
             },
@@ -183,7 +194,6 @@ const fetchGlobalAccessList = async () => {
 
                 const rawSearchStr = `${extractedService} ${sdeName} ${rangeStr}`.toLowerCase();
 
-                // 💥 ZENEX DATA SHIELD: Strip all provider keys and use 100% Zenex Custom Keys 💥
                 return {
                     service: extractedService,
                     country_operator: sdeName,
@@ -263,6 +273,14 @@ fastify.route({
         try {
             const apiKey = request.headers['mapikey'] || (request.query && request.query.mapikey);
             
+            // 💥 BOSS UPGRADE: RATE LIMIT CHECK 💥
+            const clientIdentifier = apiKey ? apiKey.trim() : request.ip;
+            const lastReqTime = requestRateLimitMap.get(clientIdentifier) || 0;
+            if (Date.now() - lastReqTime < 1000) {
+                return reply.status(429).send({ meta: { status: "error" }, message: "Too Many Requests. Max 1 request per second allowed to prevent spam." });
+            }
+            requestRateLimitMap.set(clientIdentifier, Date.now());
+
             if (!apiKey || apiKey.trim().length < 10) {
                 return reply.status(401).send({ meta: { status: "error" }, message: "Invalid API Key" });
             }
@@ -411,6 +429,15 @@ fastify.route({
 fastify.get('/v1/numsuccess/info', async (request, reply) => {
     try {
         const apiKey = request.headers['mapikey'];
+
+        // 💥 BOSS UPGRADE: RATE LIMIT CHECK 💥
+        const clientIdentifier = apiKey ? apiKey.trim() : request.ip;
+        const lastReqTime = requestRateLimitMap.get(clientIdentifier) || 0;
+        if (Date.now() - lastReqTime < 1000) {
+            return reply.status(429).send({ meta: { status: "error" }, message: "Too Many Requests. 1 request per second allowed." });
+        }
+        requestRateLimitMap.set(clientIdentifier, Date.now());
+
         if (!apiKey || apiKey.trim().length < 10) {
             return reply.status(401).send({ meta: { status: "error" }, message: "Missing API Key" });
         }
@@ -534,6 +561,15 @@ fastify.get('/v1/active-ranges', async (request, reply) => {
 fastify.get('/v1/user/today-otps', async (request, reply) => {
     try {
         const apiKey = request.headers['mapikey'];
+
+        // 💥 BOSS UPGRADE: RATE LIMIT CHECK 💥
+        const clientIdentifier = apiKey ? apiKey.trim() : request.ip;
+        const lastReqTime = requestRateLimitMap.get(clientIdentifier) || 0;
+        if (Date.now() - lastReqTime < 1000) {
+            return reply.status(429).send({ error: "Rate limit exceeded. 1 request per second max." });
+        }
+        requestRateLimitMap.set(clientIdentifier, Date.now());
+
         if (!apiKey) return reply.status(401).send({ error: "Invalid API Key" });
         
         let cachedObj = apiAuthCache.get(apiKey.trim());
@@ -560,9 +596,17 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     }
 });
 
-// 💥 BOSS UPGRADE: ENTERPRISE HYBRID DYNAMIC SEARCH (TIME-BASED SORTING) 💥
+// 💥 BOSS UPGRADE: ENTERPRISE HYBRID DYNAMIC SEARCH (STRICT TIME-BASED SORTING) 💥
 fastify.get('/v1/access-list', async (request, reply) => {
     try {
+        // 💥 BOSS UPGRADE: RATE LIMIT CHECK 💥
+        const clientIdentifier = request.ip;
+        const lastReqTime = requestRateLimitMap.get(clientIdentifier) || 0;
+        if (Date.now() - lastReqTime < 1000) {
+            return reply.status(429).send({ success: false, message: "Spam detected. Please wait 1 second before searching again." });
+        }
+        requestRateLimitMap.set(clientIdentifier, Date.now());
+
         const requestedService = (request.query.service || "").trim();
         const requestedCountry = (request.query.country || "").trim();
         
@@ -581,6 +625,8 @@ fastify.get('/v1/access-list', async (request, reply) => {
                         origin: requestedService, 
                         sp_key_list: null 
                     },
+                    sort1: "datetime", // 💥 BOSS FIX: Force Provider to send the absolute newest OTPs 💥
+                    sort1_desc: true,
                     page: 1,
                     per_page: 50
                 },
@@ -620,13 +666,13 @@ fastify.get('/v1/access-list', async (request, reply) => {
                     };
                 }).filter(Boolean); 
                 
-                // 💥 BOSS FIX: Time-Based Sorting (Latest First) just like Provider 💥
+                // 💥 BOSS FIX: Keep exact time-based sorting (Newest to Oldest) 💥
                 directResults.sort((a, b) => {
                     const timeA = new Date(a.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
                     const timeB = new Date(b.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
                     return timeB - timeA; 
                 });
-                
+
                 console.log(`✅ [DEBUG] Direct IPRN API returned ${directResults.length} pure nodes for query.`);
                 return reply.send({ success: true, data: directResults });
             } else {
@@ -641,13 +687,13 @@ fastify.get('/v1/access-list', async (request, reply) => {
             return matchService && matchCountry;
         });
 
-        // 💥 BOSS FIX: Time-Based Sorting (Latest First) just like Provider 💥
+        // 💥 BOSS FIX: Keep exact time-based sorting (Newest to Oldest) 💥
         matchedRanges.sort((a, b) => {
             const timeA = new Date(a.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
             const timeB = new Date(b.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
             return timeB - timeA; 
         });
-        
+
         const sanitizedResults = matchedRanges.slice(0, 20).map(({ _rawSearchStr, ...rest }) => rest);
         
         console.log(`✅ [DEBUG] Found ${sanitizedResults.length} default nodes in RAM.`);
