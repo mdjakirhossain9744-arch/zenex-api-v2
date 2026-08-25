@@ -105,41 +105,30 @@ const fetchSdeList = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (DEBUGGER & FALLBACK) 💥
+// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (OFFICIAL METHOD ONLY) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
     try {
         console.log("⏳ Fetching Global Access List from IPRN...");
         
-        // Primary Attempt
-        let payload = {
+        const payload = {
             jsonrpc: "2.0",
-            method: "sms.access_list__get_list:account_price",
-            params: { filter: { str: "", str2: "" }, page: 1, per_page: 5000 },
+            method: "sms.access_list__get_list:account_price", // <-- EXACT OFFICIAL NAME AS REQUESTED
+            params: { 
+                filter: { str: "", str2: "" }, 
+                page: 1, 
+                per_page: 5000 
+            },
             id: Date.now()
         };
         
-        let res = await fetch(IPRN_API_URL, {
+        const res = await fetch(IPRN_API_URL, {
             method: "POST",
             headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         });
-        let data = await res.json();
-        
-        // If Error, Try Standard Fallback Method
-        if (data.error) {
-            console.warn(`⚠️ Primary Method Failed: ${data.error.message}. Trying Fallback Method...`);
-            payload.method = "sms.access_list:get_list";
-            payload.params = { filter: {}, page: 1, per_page: 5000 };
-            
-            res = await fetch(IPRN_API_URL, {
-                method: "POST",
-                headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
-            });
-            data = await res.json();
-        }
+        const data = await res.json();
 
         if (data.error) {
             console.error("❌ IPRN API Error:", JSON.stringify(data.error));
