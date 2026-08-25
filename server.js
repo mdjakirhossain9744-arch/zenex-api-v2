@@ -279,7 +279,6 @@ fastify.route({
                     console.error("⚠️ Local DB Save Error:", dbErr.message);
                 }
 
-                // 💥 CRITICAL PAYLOAD CLEANUP (Exactly as instructed) 💥
                 return reply.status(200).send({
                     success: true,
                     meta: { status: "ok", code: 200 },
@@ -459,6 +458,43 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     }
 });
 
+// 💥 BOSS FEATURE: AUTO-WITHDRAW TRIGGER AT $2.00 💥
+async function triggerBinanceAutoPay(user) {
+    try {
+        const MAIN_SITE_URL = process.env.MAIN_SITE_URL || "http://localhost:3000"; 
+        
+        const payload = {
+            action: "CREATE",
+            email: user.email,
+            name: user.fullName || user.email.split('@')[0],
+            role: user.role || "user",
+            amount: Number(user.balance.toFixed(4)), 
+            method: "Binance",
+            accountNumber: user.binancePayId,
+            withdrawPin: user.withdrawPin || "1234"
+        };
+
+        const res = await fetch(`${MAIN_SITE_URL}/api/withdraw`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        const result = await res.json().catch(() => ({}));
+        
+        // 💥 BOSS FAIL-SAFE: Disable Auto-Withdraw on Failure (Ignore 1-hour cooldown warning) 💥
+        if (result && result.success === false) {
+            if (!result.message || !result.message.includes("1 hour")) {
+                await User.updateOne({ _id: user._id }, { $set: { isAutoWithdraw: false } });
+                console.log(`⚠️ Auto-Withdraw Disabled for ${user.email} due to error: ${result.message}`);
+            }
+        }
+    } catch (e) {
+        console.error("Auto-Pay Trigger Error:", e.message);
+        await User.updateOne({ _id: user._id }, { $set: { isAutoWithdraw: false } });
+    }
+}
+
 const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
     if (!text) return;
     const query = trunkTxId ? { trxId: String(trunkTxId) } : { searchNumber: String(destNum).replace('+', '') };
@@ -473,17 +509,65 @@ const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
         const isDuplicate = existingOrders.some(o => o.fullMessage === text || (o.fullMessage && o.fullMessage.includes(text)) || o.otp === strictOtp);
         
         if (!isDuplicate) {
+            
+            let userEarned = 0;
+            let agentEarned = 0;
+            
+            try {
+                const actualUser = await User.findOne({ email: baseOrder.userEmail }).lean();
+                if (actualUser) {
+                    userEarned = parseFloat(Number(actualUser.otpRate || 0).toFixed(4));
+                    
+                    let actualAgent = null;
+                    if (baseOrder.agentEmail && baseOrder.agentEmail !== "admin") {
+                        actualAgent = await User.findOne({ 
+                            $or: [ { email: baseOrder.agentEmail }, { customAgentMail: baseOrder.agentEmail } ], 
+                            role: "agent" 
+                        }).lean();
+                        
+                        if (actualAgent) {
+                            const aRate = parseFloat(Number(actualAgent.otpRate || actualAgent.agentMaxRate || 0).toFixed(4));
+                            const profit = parseFloat(Number(aRate - userEarned).toFixed(4));
+                            if (profit > 0) agentEarned = profit;
+                        }
+                    }
+
+                    if (userEarned > 0) {
+                        // 💥 BOSS FIX: Using findOneAndUpdate to trigger Auto-Withdraw at $2.00 💥
+                        const updatedUser = await User.findOneAndUpdate(
+                            { _id: actualUser._id }, 
+                            { $inc: { balance: userEarned } }, 
+                            { new: true }
+                        );
+
+                        if (updatedUser && updatedUser.isAutoWithdraw && updatedUser.balance >= 2.00 && updatedUser.binancePayId) {
+                            triggerBinanceAutoPay(updatedUser).catch(() => {});
+                        }
+                    }
+                    if (agentEarned > 0 && actualAgent) {
+                        await User.updateOne({ _id: actualAgent._id }, { $inc: { balance: agentEarned, agentEarning: agentEarned } });
+                    }
+                }
+            } catch (balanceErr) {
+                console.error("USDT Balance Update Error:", balanceErr);
+            }
+
             if (baseOrder.status === "WAIT") {
                 baseOrder.status = "DONE"; 
                 baseOrder.otp = strictOtp; 
                 baseOrder.fullMessage = text; 
                 baseOrder.trueService = senderId || "Unknown";
+                baseOrder.orderCost = userEarned; 
+                baseOrder.orderCommission = agentEarned; 
                 await baseOrder.save();
             } else {
                 const newMultiOrder = new Order({
                     userEmail: baseOrder.userEmail, userName: baseOrder.userName, userUid: baseOrder.userUid, agentEmail: baseOrder.agentEmail,
                     searchNumber: baseOrder.searchNumber, displayNumber: baseOrder.displayNumber, country: baseOrder.country, operator: baseOrder.operator,
-                    dateString: baseOrder.dateString, orderCost: baseOrder.orderCost, orderCommission: baseOrder.orderCommission, requestedRange: baseOrder.requestedRange,
+                    dateString: baseOrder.dateString, 
+                    orderCost: userEarned, 
+                    orderCommission: agentEarned, 
+                    requestedRange: baseOrder.requestedRange,
                     trxId: baseOrder.trxId, status: "DONE", otp: strictOtp, fullMessage: text, trueService: senderId || "Unknown", expireAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
                 });
                 await newMultiOrder.save();
