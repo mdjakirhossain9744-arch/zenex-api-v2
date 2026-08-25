@@ -105,7 +105,6 @@ const fetchSdeList = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: OFFICIAL SP_KEY DICTIONARY FETCHER 💥
 const globalSpKeyMap = new Map();
 
 const fetchReferences = async () => {
@@ -129,7 +128,7 @@ const fetchReferences = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (ULTRA-SECURE NO-PAYOUT MAPPING) 💥
+// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (ULTRA-SECURE OMNI-SEARCH MAPPING) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
@@ -156,14 +155,16 @@ const fetchGlobalAccessList = async () => {
 
         if (Array.isArray(list) && list.length > 0) {
             const formattedList = list.map(item => {
-                // 1. Exact Service Name Extraction (Using Dictionary for 100% accuracy)
+                // 1. Exact Service Name Extraction (Dictionary + Fallbacks)
                 const extractedService = globalSpKeyMap.get(item.sp_key) || item.a_description || item.origin || "OTP";
 
                 // 2. Exact Country & Operator Parsing
-                const sdeName = item.subdestination_name || item.b_description || "Unknown";
+                const sdeName = item.subdestination_name || item.b_description || item.sde_name || "Unknown";
                 
                 // 3. Exact Range
-                const rangeStr = item.b_number || "Unknown";
+                const rangeStr = item.b_test_number_list && item.b_test_number_list[0] 
+                    ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
+                    : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
 
                 // 4. Traffic Health
                 const limitDay = item.limit_day || 0;
@@ -171,15 +172,14 @@ const fetchGlobalAccessList = async () => {
                 if (limitDay > 1000) trafficLevel = "HIGH";
                 else if (limitDay < 100) trafficLevel = "LOW";
 
-                // 5. Omni-Search String
+                // 💥 5. CRITICAL FIX: Massive lowercase Omni-Search String 💥
                 const rawSearchStr = `${extractedService} ${sdeName} ${rangeStr}`.toLowerCase();
 
-                // 💥 STRICTLY NO PAYOUT DATA RETURNED HERE 💥
                 return {
                     service: extractedService,
                     country_operator: sdeName,
                     range: rangeStr,
-                    prefix: rangeStr, // Maintained for Frontend UI compatibility
+                    prefix: rangeStr, // Added for frontend mapping
                     traffic_level: trafficLevel,
                     _rawSearchStr: rawSearchStr 
                 };
@@ -549,22 +549,22 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     }
 });
 
-// 💥 BOSS UPGRADE: DYNAMIC RAM FILTERING (WITH OMNI-SEARCH & SANITIZATION) 💥
+// 💥 BOSS UPGRADE: DYNAMIC RAM FILTERING (ULTRA-FAST SEARCH) 💥
 fastify.get('/v1/access-list', async (request, reply) => {
     try {
-        const requestedService = (request.query.service || "").toLowerCase();
-        const requestedCountry = (request.query.country || "").toLowerCase();
+        const requestedService = (request.query.service || "").toLowerCase().trim();
+        const requestedCountry = (request.query.country || "").toLowerCase().trim();
         
         console.log(`🔍 [DEBUG] Search Query -> Service: '${requestedService}', Country: '${requestedCountry}'`);
         console.log(`🔍 [DEBUG] Total Nodes currently in RAM: ${globalActiveAccessList.length}`);
 
         const matchedRanges = globalActiveAccessList.filter(item => {
             const matchService = requestedService ? item._rawSearchStr.includes(requestedService) : true;
-            const matchCountry = requestedCountry ? (item.country_operator || "").toLowerCase().includes(requestedCountry) : true;
+            const matchCountry = requestedCountry ? item._rawSearchStr.includes(requestedCountry) : true;
             return matchService && matchCountry;
         });
 
-        console.log(`✅ [DEBUG] Found ${matchedRanges.length} matching nodes.`);
+        console.log(`✅ [DEBUG] Found ${matchedRanges.length} matching nodes for query: '${requestedService} ${requestedCountry}'`);
         
         // Remove the hidden `_rawSearchStr` before sending to clients for strict white-labeling
         const sanitizedResults = matchedRanges.slice(0, 20).map(({ _rawSearchStr, ...rest }) => rest);
