@@ -144,7 +144,13 @@ const fetchGlobalAccessList = async () => {
             jsonrpc: "2.0",
             method: "sms.access_list__get_list:account_price",
             params: {
-                filter: { cur_key: 1, sp_key_list: [], origin: "", destination: "" },
+                filter: { 
+                    cur_key: 1, 
+                    destination: "", 
+                    message: "", 
+                    origin: "", 
+                    sp_key_list: null 
+                },
                 page: 1,
                 per_page: 5000
             },
@@ -161,18 +167,21 @@ const fetchGlobalAccessList = async () => {
 
         if (Array.isArray(list) && list.length > 0) {
             const formattedList = list.map(item => {
-                // 💥 BOSS FIX: Service Name is STRICTLY derived from origin or a_description first 💥
-                const extractedService = item.origin || item.a_description || globalSpKeyMap.get(Number(item.sp_key)) || `Service_${item.sp_key}`;
-                const sdeName = item.subdestination_name || item.b_description || item.sde_name || "Unknown";
-                
-                const rangeStr = item.b_test_number_list && item.b_test_number_list[0] 
-                    ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
-                    : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
+                // 💥 BOSS LOGIC: Skip if Hourly Limit is Full 💥
+                const limitHour = item.limit_hour || 0;
+                const counterHour = item.counter_hour || 0;
+                if (limitHour > 0 && counterHour >= limitHour) return null;
 
+                const extractedService = item.a_description || item.origin || globalSpKeyMap.get(Number(item.sp_key)) || `Service_${item.sp_key}`;
+                const sdeName = item.b_description || item.subdestination_name || "Unknown";
+                
+                const rangeStr = item.b_number || (item.b_test_number_list && item.b_test_number_list[0] ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" : "Unknown");
+
+                // 💥 BOSS LOGIC: High Limit = Good Traffic 💥
                 const limitDay = item.limit_day || 0;
-                let trafficLevel = "STABLE";
-                if (limitDay > 1000) trafficLevel = "HIGH";
-                else if (limitDay < 100) trafficLevel = "LOW";
+                let trafficLevel = "GOOD";
+                if (limitDay >= 5000) trafficLevel = "EXCELLENT";
+                else if (limitDay < 100) trafficLevel = "LOW_CAPACITY";
 
                 const rawSearchStr = `${extractedService} ${sdeName} ${rangeStr}`.toLowerCase();
 
@@ -182,9 +191,11 @@ const fetchGlobalAccessList = async () => {
                     range: rangeStr,
                     prefix: rangeStr, 
                     traffic_level: trafficLevel,
+                    message_template: item.message || "No Message Data",
+                    last_update: item.datetime || "",
                     _rawSearchStr: rawSearchStr 
                 };
-            });
+            }).filter(Boolean); // Remove skipped items
             
             globalActiveAccessList = formattedList;
             console.log(`✅ [SUCCESS] Global Access List Loaded & Secured: ${globalActiveAccessList.length} nodes active in RAM.`);
@@ -553,16 +564,12 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
 // 💥 BOSS UPGRADE: ENTERPRISE HYBRID DYNAMIC SEARCH (STRICT ORIGIN FILTERING) 💥
 fastify.get('/v1/access-list', async (request, reply) => {
     try {
-        // We capture exact terms to pass to Provider's "origin" and "destination"
         const requestedService = (request.query.service || "").trim();
         const requestedCountry = (request.query.country || "").trim();
         
         console.log(`🔍 [DEBUG] Search Query -> Service (Origin): '${requestedService}', Country (Destination): '${requestedCountry}'`);
         
-        // If User types ANYTHING, we hit IPRN directly to get REAL DATA
         if (requestedService || requestedCountry) {
-            let targetSpKey = null; // We keep this variable to not delete it, but rely purely on `origin`
-            
             console.log(`⚡ [DEBUG] Fetching strictly from IPRN API using origin: [${requestedService}]`);
             const payload = {
                 jsonrpc: "2.0",
@@ -570,9 +577,10 @@ fastify.get('/v1/access-list', async (request, reply) => {
                 params: {
                     filter: { 
                         cur_key: 1, 
-                        sp_key_list: [], // DO NOT filter by sp_key, it causes the Germany bug
-                        origin: requestedService, // 💥 STRICT ORIGIN SEARCH 💥
-                        destination: requestedCountry 
+                        destination: requestedCountry,
+                        message: "", 
+                        origin: requestedService, 
+                        sp_key_list: null 
                     },
                     page: 1,
                     per_page: 50
@@ -589,32 +597,41 @@ fastify.get('/v1/access-list', async (request, reply) => {
             
             if (data?.result?.access_list_list && data.result.access_list_list.length > 0) {
                 let directResults = data.result.access_list_list.map(item => {
-                    const extractedService = item.origin || item.a_description || requestedService || `Service_${item.sp_key}`;
-                    const sdeName = item.subdestination_name || item.b_description || item.sde_name || "Unknown";
-                    const rangeStr = item.b_test_number_list && item.b_test_number_list[0] 
-                        ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
-                        : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
+                    // 💥 BOSS LOGIC: Skip if Hourly Limit is Full 💥
+                    const limitHour = item.limit_hour || 0;
+                    const counterHour = item.counter_hour || 0;
+                    if (limitHour > 0 && counterHour >= limitHour) return null;
 
-                    let trafficLevel = "STABLE";
-                    if (item.limit_day > 1000) trafficLevel = "HIGH";
-                    else if (item.limit_day < 100) trafficLevel = "LOW";
+                    const extractedService = item.a_description || item.origin || requestedService || `Service_${item.sp_key}`;
+                    const sdeName = item.b_description || item.subdestination_name || "Unknown";
+                    const rangeStr = item.b_number || (item.b_test_number_list && item.b_test_number_list[0] ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" : "Unknown");
+
+                    // 💥 BOSS LOGIC: High Limit = Good Traffic 💥
+                    const limitDay = item.limit_day || 0;
+                    let trafficLevel = "GOOD";
+                    if (limitDay >= 5000) trafficLevel = "EXCELLENT";
+                    else if (limitDay < 100) trafficLevel = "LOW_CAPACITY";
 
                     return {
                         service: extractedService,
                         country_operator: sdeName,
                         range: rangeStr,
                         prefix: rangeStr,
-                        traffic_level: trafficLevel
+                        traffic_level: trafficLevel,
+                        message_template: item.message || "No Message Data",
+                        last_update: item.datetime || ""
                     };
-                });
+                }).filter(Boolean); // Remove skipped items
                 
-                directResults.sort((a, b) => a.country_operator.localeCompare(b.country_operator)); // ALPHABETICAL SORT FIX
+                directResults.sort((a, b) => a.country_operator.localeCompare(b.country_operator)); 
                 console.log(`✅ [DEBUG] Direct IPRN API returned ${directResults.length} pure nodes for query.`);
                 return reply.send({ success: true, data: directResults });
+            } else {
+                console.log(`⚠️ [DEBUG] IPRN API returned empty list for origin [${requestedService}]. Check if service exists.`);
             }
         }
 
-        console.log(`🔍 [DEBUG] Blank Search: Loading from RAM... Total Nodes currently in RAM: ${globalActiveAccessList.length}`);
+        console.log(`🔍 [DEBUG] Blank Search or Fallback: Loading from RAM... Total Nodes currently in RAM: ${globalActiveAccessList.length}`);
         const matchedRanges = globalActiveAccessList.filter(item => {
             const matchService = requestedService ? item._rawSearchStr.includes(requestedService.toLowerCase()) : true;
             const matchCountry = requestedCountry ? item._rawSearchStr.includes(requestedCountry.toLowerCase()) : true;
