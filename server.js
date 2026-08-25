@@ -105,7 +105,31 @@ const fetchSdeList = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (RAW DATA DUMP & DEBUGGING) 💥
+// 💥 BOSS UPGRADE: OFFICIAL SP_KEY DICTIONARY FETCHER 💥
+const globalSpKeyMap = new Map();
+
+const fetchReferences = async () => {
+    try {
+        const payload = { jsonrpc: "2.0", method: "references_client", params: {}, id: Date.now() };
+        const res = await fetch(IPRN_API_URL, {
+            method: "POST",
+            headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        
+        if (data?.result?.service_plan_list) {
+            data.result.service_plan_list.forEach(sp => {
+                globalSpKeyMap.set(sp.sp_key, sp.name || sp.service_plan_name);
+            });
+            console.log(`✅ Official Service Plan (sp_key) Dictionary Loaded: ${globalSpKeyMap.size} services cached.`);
+        }
+    } catch (e) {
+        console.error("⚠️ Failed to load references:", e.message);
+    }
+};
+
+// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (DYNAMIC DICTIONARY MAPPING) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
@@ -131,31 +155,35 @@ const fetchGlobalAccessList = async () => {
         const list = data?.result?.access_list_list;
 
         if (Array.isArray(list) && list.length > 0) {
-            // 💥 CRITICAL DEBUG LOG: Print exact structure of the first item 💥
-            console.log("🔍 [DEBUG RAW PROVIDER OBJECT]:", JSON.stringify(list[0], null, 2));
-
             const formattedList = list.map(item => {
                 const rawString = JSON.stringify(item).toLowerCase(); 
                 
-                let extractedService = item.origin || item.access_origin || item.a_description || "OTP";
-                if (rawString.includes("facebook")) extractedService = "Facebook";
-                else if (rawString.includes("whatsapp")) extractedService = "WhatsApp";
-                else if (rawString.includes("telegram")) extractedService = "Telegram";
-                else if (rawString.includes("12go")) extractedService = "12Go";
+                // 100% Accurate Service Name from Official Dictionary
+                let extractedService = globalSpKeyMap.get(item.sp_key) || item.origin || item.access_origin || item.a_description || "OTP";
+
+                const sdeName = item.subdestination_name || item.sde_name || "Unknown";
+                const limitDay = item.limit_day || 0;
+                const counterDay = item.counter_day || 0;
+                const remaining = Math.max(0, limitDay - counterDay);
+                const numbersCount = item.numbers_count || item.available_numbers || 0;
+                
+                let trafficLevel = "STABLE";
+                if (remaining > 5000 || numbersCount > 50) trafficLevel = "HIGH";
+                else if (remaining < 100 || numbersCount < 5) trafficLevel = "LOW";
+
+                const extractedRange = item.b_test_number_list && item.b_test_number_list[0] 
+                    ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
+                    : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
 
                 return {
                     service: extractedService,
-                    country_operator: item.subdestination_name || item.sde_name || "Unknown",
-                    range: item.b_test_number_list && item.b_test_number_list[0] 
-                        ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
-                        : "Unknown",
-                    prefix: item.b_test_number_list && item.b_test_number_list[0] 
-                        ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
-                        : "Unknown",
-                    payout: item.rate || 0.01,
-                    traffic_level: "STABLE",
-                    remaining_capacity: 1000,
-                    _rawSearchStr: rawString
+                    country_operator: sdeName,
+                    range: extractedRange,
+                    prefix: extractedRange, // Retained for frontend compatibility
+                    payout: item.rate || item.price || 0.01,
+                    traffic_level: trafficLevel,
+                    remaining_capacity: remaining,
+                    _rawSearchStr: (rawString + " " + extractedService.toLowerCase()) // Add exact service to search string
                 };
             });
             
@@ -726,6 +754,7 @@ const startServer = async () => {
         await connectDB();
         await fetchIPRNTrunk(); 
         await fetchSdeList(); 
+        await fetchReferences(); // 💥 BOSS UPGRADE: FETCH OFFICIAL DICTIONARY ON STARTUP
         await fetchGlobalAccessList(); 
         await fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' });
         console.log(`⚡ ZENEX Microservice V2 is LIVE at: http://localhost:${process.env.PORT || 5000}`);
