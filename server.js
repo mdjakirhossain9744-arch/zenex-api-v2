@@ -129,7 +129,7 @@ const fetchReferences = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (DYNAMIC DICTIONARY MAPPING) 💥
+// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (ULTRA-SECURE NO-PAYOUT MAPPING) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
@@ -156,39 +156,37 @@ const fetchGlobalAccessList = async () => {
 
         if (Array.isArray(list) && list.length > 0) {
             const formattedList = list.map(item => {
-                const rawString = JSON.stringify(item).toLowerCase(); 
-                
-                // 100% Accurate Service Name from Official Dictionary
-                let extractedService = globalSpKeyMap.get(item.sp_key) || item.origin || item.access_origin || item.a_description || "OTP";
+                // 1. Exact Service Name Extraction (Using Dictionary for 100% accuracy)
+                const extractedService = globalSpKeyMap.get(item.sp_key) || item.a_description || item.origin || "OTP";
 
-                const sdeName = item.subdestination_name || item.sde_name || "Unknown";
+                // 2. Exact Country & Operator Parsing
+                const sdeName = item.subdestination_name || item.b_description || "Unknown";
+                
+                // 3. Exact Range
+                const rangeStr = item.b_number || "Unknown";
+
+                // 4. Traffic Health
                 const limitDay = item.limit_day || 0;
-                const counterDay = item.counter_day || 0;
-                const remaining = Math.max(0, limitDay - counterDay);
-                const numbersCount = item.numbers_count || item.available_numbers || 0;
-                
                 let trafficLevel = "STABLE";
-                if (remaining > 5000 || numbersCount > 50) trafficLevel = "HIGH";
-                else if (remaining < 100 || numbersCount < 5) trafficLevel = "LOW";
+                if (limitDay > 1000) trafficLevel = "HIGH";
+                else if (limitDay < 100) trafficLevel = "LOW";
 
-                const extractedRange = item.b_test_number_list && item.b_test_number_list[0] 
-                    ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
-                    : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
+                // 5. Omni-Search String
+                const rawSearchStr = `${extractedService} ${sdeName} ${rangeStr}`.toLowerCase();
 
+                // 💥 STRICTLY NO PAYOUT DATA RETURNED HERE 💥
                 return {
                     service: extractedService,
                     country_operator: sdeName,
-                    range: extractedRange,
-                    prefix: extractedRange, // Retained for frontend compatibility
-                    payout: item.rate || item.price || 0.01,
+                    range: rangeStr,
+                    prefix: rangeStr, // Maintained for Frontend UI compatibility
                     traffic_level: trafficLevel,
-                    remaining_capacity: remaining,
-                    _rawSearchStr: (rawString + " " + extractedService.toLowerCase()) // Add exact service to search string
+                    _rawSearchStr: rawSearchStr 
                 };
             });
             
             globalActiveAccessList = formattedList;
-            console.log(`✅ [SUCCESS] Global Access List Loaded: ${globalActiveAccessList.length} nodes active in RAM.`);
+            console.log(`✅ [SUCCESS] Global Access List Loaded & Secured: ${globalActiveAccessList.length} nodes active in RAM.`);
         } else {
             console.error("❌ [ERROR] Parser failed or list empty. Raw:", JSON.stringify(data.result).substring(0, 100));
         }
@@ -754,7 +752,7 @@ const startServer = async () => {
         await connectDB();
         await fetchIPRNTrunk(); 
         await fetchSdeList(); 
-        await fetchReferences(); // 💥 BOSS UPGRADE: FETCH OFFICIAL DICTIONARY ON STARTUP
+        await fetchReferences(); 
         await fetchGlobalAccessList(); 
         await fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' });
         console.log(`⚡ ZENEX Microservice V2 is LIVE at: http://localhost:${process.env.PORT || 5000}`);
