@@ -119,13 +119,19 @@ const fetchReferences = async () => {
         
         if (data?.result?.service_plan_list) {
             data.result.service_plan_list.forEach(sp => {
-                globalSpKeyMap.set(sp.sp_key, sp.name || sp.service_plan_name);
+                globalSpKeyMap.set(Number(sp.sp_key), sp.name || sp.service_plan_name);
             });
             console.log(`✅ Official Service Plan (sp_key) Dictionary Loaded: ${globalSpKeyMap.size} services cached.`);
         }
     } catch (e) {
         console.error("⚠️ Failed to load references:", e.message);
     }
+};
+
+const KNOWN_SP_KEYS = {
+    101: "Telegram", 102: "Viber", 103: "Facebook", 104: "WhatsApp", 105: "Line", 
+    106: "TikTok", 111: "Twitter", 115: "Google", 117: "Microsoft", 122: "Instagram", 
+    128: "Amazon", 135: "Snapchat", 145: "Discord", 146: "Netflix", 168: "Tinder"
 };
 
 // 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (ULTRA-SECURE OMNI-SEARCH MAPPING) 💥
@@ -156,7 +162,7 @@ const fetchGlobalAccessList = async () => {
         if (Array.isArray(list) && list.length > 0) {
             const formattedList = list.map(item => {
                 // 1. Exact Service Name Extraction (Dictionary + Fallbacks)
-                const extractedService = globalSpKeyMap.get(item.sp_key) || item.a_description || item.origin || "OTP";
+                const extractedService = globalSpKeyMap.get(Number(item.sp_key)) || KNOWN_SP_KEYS[Number(item.sp_key)] || item.a_description || item.origin || `Service_${item.sp_key}`;
 
                 // 2. Exact Country & Operator Parsing
                 const sdeName = item.subdestination_name || item.b_description || item.sde_name || "Unknown";
