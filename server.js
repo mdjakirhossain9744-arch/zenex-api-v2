@@ -105,47 +105,66 @@ const fetchSdeList = async () => {
     }
 };
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (BACKGROUND POLLER) 💥
+// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (DEBUGGER & FALLBACK) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
     try {
-        const payload = {
+        console.log("⏳ Fetching Global Access List from IPRN...");
+        
+        // Primary Attempt
+        let payload = {
             jsonrpc: "2.0",
             method: "sms.access_list__get_list:account_price",
-            params: {
-                filter: {
-                    str: "",   
-                    str2: ""   
-                },
-                page: 1,
-                per_page: 10000 
-            },
+            params: { filter: { str: "", str2: "" }, page: 1, per_page: 5000 },
             id: Date.now()
         };
-        const res = await fetch(IPRN_API_URL, {
+        
+        let res = await fetch(IPRN_API_URL, {
             method: "POST",
             headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         });
-        const data = await res.json();
+        let data = await res.json();
         
+        // If Error, Try Standard Fallback Method
+        if (data.error) {
+            console.warn(`⚠️ Primary Method Failed: ${data.error.message}. Trying Fallback Method...`);
+            payload.method = "sms.access_list:get_list";
+            payload.params = { filter: {}, page: 1, per_page: 5000 };
+            
+            res = await fetch(IPRN_API_URL, {
+                method: "POST",
+                headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            data = await res.json();
+        }
+
+        if (data.error) {
+            console.error("❌ IPRN API Error:", JSON.stringify(data.error));
+            return;
+        }
+
+        console.log("🔍 [DEBUG] Provider Access List Raw Response Code:", data?.meta?.code || data?.jsonrpc || "No Meta");
+
         const rawList = data?.result?.list || data?.result?.account_price_list || data?.result?.access_list || [];
         
         if (rawList.length > 0) {
             globalActiveAccessList = rawList.map(item => ({
                 service: item.access_origin_name || item.access_origin || item.service || "Unknown",
                 country_operator: item.sde_name || item.destination || "Unknown",
-                price: item.price || 0,
+                price: item.price || item.rate || 0,
                 prefix: item.prefix || item.range || ""
             }));
-            console.log(`✅ Global Access List Cached to RAM: ${globalActiveAccessList.length} services ready!`);
+            console.log(`✅ [DEBUG] Successfully mapped ${globalActiveAccessList.length} global access nodes into RAM.`);
+        } else {
+            console.error("❌ [DEBUG] Failed to load access list. Provider returned:", JSON.stringify(data).substring(0, 300));
         }
     } catch (e) {
-        console.error("⚠️ Failed to fetch Global Access List:", e.message);
+        console.error("❌ Failed to fetch Global Access List:", e.message);
     }
 };
-// Poll every 10 minutes to keep RAM Cache updated
 setInterval(fetchGlobalAccessList, 10 * 60 * 1000);
 
 const apiAuthCache = new Map();
@@ -501,18 +520,23 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     }
 });
 
-// 💥 BOSS UPGRADE: DYNAMIC RAM FILTERING API 💥
+// 💥 BOSS UPGRADE: DYNAMIC RAM FILTERING API WITH LOGS 💥
 fastify.get('/v1/access-list', async (request, reply) => {
     try {
-        const requestedService = request.query.service ? request.query.service.toLowerCase() : "";
-        const requestedCountry = request.query.country ? request.query.country.toLowerCase() : "";
+        const requestedService = (request.query.service || "").toLowerCase();
+        const requestedCountry = (request.query.country || "").toLowerCase();
+        
+        console.log(`🔍 [DEBUG] Search Query -> Service: '${requestedService}', Country: '${requestedCountry}'`);
+        console.log(`🔍 [DEBUG] Total Nodes currently in RAM: ${globalActiveAccessList.length}`);
 
         const matchedRanges = globalActiveAccessList.filter(item => {
-            const matchService = requestedService ? item.service.toLowerCase().includes(requestedService) : true;
-            const matchCountry = requestedCountry ? item.country_operator.toLowerCase().includes(requestedCountry) : true;
+            const matchService = requestedService ? (item.service || "").toLowerCase().includes(requestedService) : true;
+            const matchCountry = requestedCountry ? (item.country_operator || "").toLowerCase().includes(requestedCountry) : true;
             return matchService && matchCountry;
         });
 
+        console.log(`✅ [DEBUG] Found ${matchedRanges.length} matching nodes.`);
+        
         return reply.send({
             success: true,
             data: matchedRanges.slice(0, 20) 
@@ -696,7 +720,7 @@ const startServer = async () => {
         await connectDB();
         await fetchIPRNTrunk(); 
         await fetchSdeList(); 
-        await fetchGlobalAccessList(); // 💥 BOSS UPGRADE: Preload Access List on startup
+        await fetchGlobalAccessList(); 
         await fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' });
         console.log(`⚡ ZENEX Microservice V2 is LIVE at: http://localhost:${process.env.PORT || 5000}`);
     } catch (err) { process.exit(1); }
