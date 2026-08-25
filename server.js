@@ -134,7 +134,6 @@ const KNOWN_SP_KEYS = {
     128: "Amazon", 135: "Snapchat", 145: "Discord", 146: "Netflix", 168: "Tinder"
 };
 
-// 💥 BOSS UPGRADE: RATE LIMITER MAP (DDoS & Spam Protection) 💥
 const requestRateLimitMap = new Map();
 setInterval(() => {
     const now = Date.now();
@@ -143,7 +142,6 @@ setInterval(() => {
     }
 }, 10000);
 
-// 💥 BOSS UPGRADE: GLOBAL ACCESS LIST (ULTRA-SECURE OMNI-SEARCH MAPPING) 💥
 let globalActiveAccessList = [];
 
 const fetchGlobalAccessList = async () => {
@@ -265,7 +263,6 @@ setInterval(() => {
     }
 }, 30000); 
 
-// 💥 PURE EXTERNAL API ROUTE (V1 LOGIC: ONLY API USERS) 💥
 fastify.route({
     method: ['GET', 'POST'], 
     url: '/v1/getnum',
@@ -273,7 +270,6 @@ fastify.route({
         try {
             const apiKey = request.headers['mapikey'] || (request.query && request.query.mapikey);
             
-            // 💥 BOSS UPGRADE: RATE LIMIT CHECK 💥
             const clientIdentifier = apiKey ? apiKey.trim() : request.ip;
             const lastReqTime = requestRateLimitMap.get(clientIdentifier) || 0;
             if (Date.now() - lastReqTime < 1000) {
@@ -430,7 +426,6 @@ fastify.get('/v1/numsuccess/info', async (request, reply) => {
     try {
         const apiKey = request.headers['mapikey'];
 
-        // 💥 BOSS UPGRADE: RATE LIMIT CHECK 💥
         const clientIdentifier = apiKey ? apiKey.trim() : request.ip;
         const lastReqTime = requestRateLimitMap.get(clientIdentifier) || 0;
         if (Date.now() - lastReqTime < 1000) {
@@ -562,7 +557,6 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     try {
         const apiKey = request.headers['mapikey'];
 
-        // 💥 BOSS UPGRADE: RATE LIMIT CHECK 💥
         const clientIdentifier = apiKey ? apiKey.trim() : request.ip;
         const lastReqTime = requestRateLimitMap.get(clientIdentifier) || 0;
         if (Date.now() - lastReqTime < 1000) {
@@ -596,10 +590,8 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     }
 });
 
-// 💥 BOSS UPGRADE: ENTERPRISE HYBRID DYNAMIC SEARCH (STRICT TIME-BASED SORTING) 💥
 fastify.get('/v1/access-list', async (request, reply) => {
     try {
-        // 💥 BOSS UPGRADE: RATE LIMIT CHECK 💥
         const clientIdentifier = request.ip;
         const lastReqTime = requestRateLimitMap.get(clientIdentifier) || 0;
         if (Date.now() - lastReqTime < 1000) {
@@ -625,7 +617,7 @@ fastify.get('/v1/access-list', async (request, reply) => {
                         origin: requestedService, 
                         sp_key_list: null 
                     },
-                    sort1: "datetime", // 💥 BOSS FIX: Force Provider to send the absolute newest OTPs 💥
+                    sort1: "datetime", 
                     sort1_desc: true,
                     page: 1,
                     per_page: 50
@@ -666,7 +658,6 @@ fastify.get('/v1/access-list', async (request, reply) => {
                     };
                 }).filter(Boolean); 
                 
-                // 💥 BOSS FIX: Keep exact time-based sorting (Newest to Oldest) 💥
                 directResults.sort((a, b) => {
                     const timeA = new Date(a.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
                     const timeB = new Date(b.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
@@ -687,14 +678,14 @@ fastify.get('/v1/access-list', async (request, reply) => {
             return matchService && matchCountry;
         });
 
-        // 💥 BOSS FIX: Keep exact time-based sorting (Newest to Oldest) 💥
         matchedRanges.sort((a, b) => {
             const timeA = new Date(a.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
             const timeB = new Date(b.last_update.replace(' ', 'T') + 'Z').getTime() || 0;
             return timeB - timeA; 
         });
 
-        const sanitizedResults = matchedRanges.slice(0, 20).map(({ _rawSearchStr, ...rest }) => rest);
+        // 💥 BOSS UPGRADE: Increased RAM Cache display to 50 💥
+        const sanitizedResults = matchedRanges.slice(0, 50).map(({ _rawSearchStr, ...rest }) => rest);
         
         console.log(`✅ [DEBUG] Found ${sanitizedResults.length} default nodes in RAM.`);
         return reply.send({
@@ -706,7 +697,6 @@ fastify.get('/v1/access-list', async (request, reply) => {
     }
 });
 
-// 💥 BOSS FEATURE: AUTO-WITHDRAW TRIGGER AT $2.00 💥
 async function triggerBinanceAutoPay(user) {
     try {
         const MAIN_SITE_URL = process.env.MAIN_SITE_URL || "http://localhost:3000"; 
@@ -730,7 +720,6 @@ async function triggerBinanceAutoPay(user) {
         
         const result = await res.json().catch(() => ({}));
         
-        // 💥 BOSS FAIL-SAFE: Disable Auto-Withdraw on Failure (Ignore 1-hour cooldown warning) 💥
         if (result && result.success === false) {
             if (!result.message || !result.message.includes("1 hour")) {
                 await User.updateOne({ _id: user._id }, { $set: { isAutoWithdraw: false } });
@@ -746,7 +735,6 @@ async function triggerBinanceAutoPay(user) {
 const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
     if (!text) return;
     
-    // 💥 BOSS FIX: Fallback to Destination Number for OTP Matching! 💥
     const cleanDestNum = String(destNum).replace('+', '');
     const query = { $or: [{ searchNumber: cleanDestNum }, { displayNumber: `+${cleanDestNum}` }] };
     if (trunkTxId) {
@@ -875,7 +863,6 @@ const pollIncomingOTPs = async () => {
         const data = await res.json();
         if (data && data.result && Array.isArray(data.result.mdr_list)) {
             for (const msg of data.result.mdr_list) {
-                // 💥 BOSS FIX: Extended Poller Mapping for Safety 💥
                 await processIncomingOTP(
                     msg.message_id || msg.trunk_number_transaction_id || msg.id, 
                     msg.text || msg.message || msg.content || "", 
