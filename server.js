@@ -144,7 +144,7 @@ const fetchGlobalAccessList = async () => {
             jsonrpc: "2.0",
             method: "sms.access_list__get_list:account_price",
             params: {
-                filter: { cur_key: 1, sp_key_list: null, str: "", str2: "" },
+                filter: { cur_key: 1, sp_key_list: [], origin: "", destination: "" },
                 page: 1,
                 per_page: 5000
             },
@@ -161,31 +161,26 @@ const fetchGlobalAccessList = async () => {
 
         if (Array.isArray(list) && list.length > 0) {
             const formattedList = list.map(item => {
-                // 1. Exact Service Name Extraction (Dictionary + Fallbacks)
-                const extractedService = globalSpKeyMap.get(Number(item.sp_key)) || KNOWN_SP_KEYS[Number(item.sp_key)] || item.a_description || item.origin || `Service_${item.sp_key}`;
-
-                // 2. Exact Country & Operator Parsing
+                // 💥 BOSS FIX: Service Name is STRICTLY derived from origin or a_description first 💥
+                const extractedService = item.origin || item.a_description || globalSpKeyMap.get(Number(item.sp_key)) || `Service_${item.sp_key}`;
                 const sdeName = item.subdestination_name || item.b_description || item.sde_name || "Unknown";
                 
-                // 3. Exact Range
                 const rangeStr = item.b_test_number_list && item.b_test_number_list[0] 
                     ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
                     : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
 
-                // 4. Traffic Health
                 const limitDay = item.limit_day || 0;
                 let trafficLevel = "STABLE";
                 if (limitDay > 1000) trafficLevel = "HIGH";
                 else if (limitDay < 100) trafficLevel = "LOW";
 
-                // 💥 5. CRITICAL FIX: Massive lowercase Omni-Search String 💥
                 const rawSearchStr = `${extractedService} ${sdeName} ${rangeStr}`.toLowerCase();
 
                 return {
                     service: extractedService,
                     country_operator: sdeName,
                     range: rangeStr,
-                    prefix: rangeStr, // Added for frontend mapping
+                    prefix: rangeStr, 
                     traffic_level: trafficLevel,
                     _rawSearchStr: rawSearchStr 
                 };
@@ -555,26 +550,81 @@ fastify.get('/v1/user/today-otps', async (request, reply) => {
     }
 });
 
-// 💥 BOSS UPGRADE: DYNAMIC RAM FILTERING (ULTRA-FAST SEARCH) 💥
+// 💥 BOSS UPGRADE: ENTERPRISE HYBRID DYNAMIC SEARCH (STRICT ORIGIN FILTERING) 💥
 fastify.get('/v1/access-list', async (request, reply) => {
     try {
-        const requestedService = (request.query.service || "").toLowerCase().trim();
-        const requestedCountry = (request.query.country || "").toLowerCase().trim();
+        // We capture exact terms to pass to Provider's "origin" and "destination"
+        const requestedService = (request.query.service || "").trim();
+        const requestedCountry = (request.query.country || "").trim();
         
-        console.log(`🔍 [DEBUG] Search Query -> Service: '${requestedService}', Country: '${requestedCountry}'`);
-        console.log(`🔍 [DEBUG] Total Nodes currently in RAM: ${globalActiveAccessList.length}`);
+        console.log(`🔍 [DEBUG] Search Query -> Service (Origin): '${requestedService}', Country (Destination): '${requestedCountry}'`);
+        
+        // If User types ANYTHING, we hit IPRN directly to get REAL DATA
+        if (requestedService || requestedCountry) {
+            let targetSpKey = null; // We keep this variable to not delete it, but rely purely on `origin`
+            
+            console.log(`⚡ [DEBUG] Fetching strictly from IPRN API using origin: [${requestedService}]`);
+            const payload = {
+                jsonrpc: "2.0",
+                method: "sms.access_list__get_list:account_price",
+                params: {
+                    filter: { 
+                        cur_key: 1, 
+                        sp_key_list: [], // DO NOT filter by sp_key, it causes the Germany bug
+                        origin: requestedService, // 💥 STRICT ORIGIN SEARCH 💥
+                        destination: requestedCountry 
+                    },
+                    page: 1,
+                    per_page: 50
+                },
+                id: Date.now()
+            };
+            
+            const res = await fetch(IPRN_API_URL, {
+                method: "POST",
+                headers: { "Api-Key": IPRN_API_KEY, "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            
+            if (data?.result?.access_list_list && data.result.access_list_list.length > 0) {
+                let directResults = data.result.access_list_list.map(item => {
+                    const extractedService = item.origin || item.a_description || requestedService || `Service_${item.sp_key}`;
+                    const sdeName = item.subdestination_name || item.b_description || item.sde_name || "Unknown";
+                    const rangeStr = item.b_test_number_list && item.b_test_number_list[0] 
+                        ? item.b_test_number_list[0].replace(/X/g, '') + "XXX" 
+                        : (item.b_number ? item.b_number.replace(/X/g, '') + "XXX" : "Unknown");
 
+                    let trafficLevel = "STABLE";
+                    if (item.limit_day > 1000) trafficLevel = "HIGH";
+                    else if (item.limit_day < 100) trafficLevel = "LOW";
+
+                    return {
+                        service: extractedService,
+                        country_operator: sdeName,
+                        range: rangeStr,
+                        prefix: rangeStr,
+                        traffic_level: trafficLevel
+                    };
+                });
+                
+                directResults.sort((a, b) => a.country_operator.localeCompare(b.country_operator)); // ALPHABETICAL SORT FIX
+                console.log(`✅ [DEBUG] Direct IPRN API returned ${directResults.length} pure nodes for query.`);
+                return reply.send({ success: true, data: directResults });
+            }
+        }
+
+        console.log(`🔍 [DEBUG] Blank Search: Loading from RAM... Total Nodes currently in RAM: ${globalActiveAccessList.length}`);
         const matchedRanges = globalActiveAccessList.filter(item => {
-            const matchService = requestedService ? item._rawSearchStr.includes(requestedService) : true;
-            const matchCountry = requestedCountry ? item._rawSearchStr.includes(requestedCountry) : true;
+            const matchService = requestedService ? item._rawSearchStr.includes(requestedService.toLowerCase()) : true;
+            const matchCountry = requestedCountry ? item._rawSearchStr.includes(requestedCountry.toLowerCase()) : true;
             return matchService && matchCountry;
         });
 
-        console.log(`✅ [DEBUG] Found ${matchedRanges.length} matching nodes for query: '${requestedService} ${requestedCountry}'`);
-        
-        // Remove the hidden `_rawSearchStr` before sending to clients for strict white-labeling
+        matchedRanges.sort((a, b) => a.country_operator.localeCompare(b.country_operator)); 
         const sanitizedResults = matchedRanges.slice(0, 20).map(({ _rawSearchStr, ...rest }) => rest);
         
+        console.log(`✅ [DEBUG] Found ${sanitizedResults.length} default nodes in RAM.`);
         return reply.send({
             success: true,
             data: sanitizedResults 
@@ -623,7 +673,14 @@ async function triggerBinanceAutoPay(user) {
 
 const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
     if (!text) return;
-    const query = trunkTxId ? { trxId: String(trunkTxId) } : { searchNumber: String(destNum).replace('+', '') };
+    
+    // 💥 BOSS FIX: Fallback to Destination Number for OTP Matching! 💥
+    const cleanDestNum = String(destNum).replace('+', '');
+    const query = { $or: [{ searchNumber: cleanDestNum }, { displayNumber: `+${cleanDestNum}` }] };
+    if (trunkTxId) {
+        query.$or.push({ trxId: String(trunkTxId) });
+    }
+    
     const existingOrders = await Order.find(query).sort({ _id: 1 });
     
     if (existingOrders.length > 0) {
@@ -659,7 +716,6 @@ const processIncomingOTP = async (trunkTxId, text, senderId, destNum) => {
                     }
 
                     if (userEarned > 0) {
-                        // 💥 BOSS FIX: Using findOneAndUpdate to trigger Auto-Withdraw at $2.00 💥
                         const updatedUser = await User.findOneAndUpdate(
                             { _id: actualUser._id }, 
                             { $inc: { balance: userEarned } }, 
@@ -708,6 +764,7 @@ fastify.post('/v1/webhook/iprn-receive', async (request, reply) => {
         const clientIP = request.ip;
         
         if (!allowedIPs.includes(clientIP)) {
+            console.warn(`🚨 [DEBUG] WEBHOOK REJECTED! Unknown IP: ${clientIP}. Tell Andrew to add this IP to allowedIPs!`);
             return reply.status(403).send({ success: false, message: "Unauthorized IP. ZENEX Security Firewall Active." });
         }
         
@@ -715,7 +772,7 @@ fastify.post('/v1/webhook/iprn-receive', async (request, reply) => {
         const trunkTxId = data.message_id || data.trunk_number_transaction_id || data.trxId;
         const text = data.text || data.message || data.content;
         const senderId = data.senderid || data.source_addr || "Unknown";
-        const destNum = data.destination_addr || data.number;
+        const destNum = data.destination_addr || data.number || data.b_number;
         
         if (!text) return reply.status(400).send({ success: false, message: "No text found in payload" });
         
@@ -746,7 +803,13 @@ const pollIncomingOTPs = async () => {
         const data = await res.json();
         if (data && data.result && Array.isArray(data.result.mdr_list)) {
             for (const msg of data.result.mdr_list) {
-                await processIncomingOTP(msg.message_id || msg.trunk_number_transaction_id, msg.text || msg.message || "", msg.senderid || msg.source_addr || "Unknown", msg.destination_addr || msg.number || "");
+                // 💥 BOSS FIX: Extended Poller Mapping for Safety 💥
+                await processIncomingOTP(
+                    msg.message_id || msg.trunk_number_transaction_id || msg.id, 
+                    msg.text || msg.message || msg.content || "", 
+                    msg.senderid || msg.source_addr || msg.a_number || "Unknown", 
+                    msg.destination_addr || msg.number || msg.b_number || ""
+                );
             }
         }
     } catch (err) {} finally { isPolling = false; }
